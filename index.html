@@ -112,6 +112,9 @@
 
         const defaultSharedData = {
             adminCreds: { username: "admin", password: "admin123", displayName: "Main Admin", role: "Super Admin" },
+            adminBalances: [
+                { id: 1, name: "Main Admin", amount: 0 }
+            ],
             paymentSettings: {
                 upiId: "groupadmin@upi",
                 qrImageUrl: "https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=upi://pay?pa=groupadmin@upi&pn=AmariBachatAmariSuraksha&am=500&cu=INR"
@@ -142,6 +145,9 @@
 
         function normalizeAppData() {
             if (!appData.adminCreds) appData.adminCreds = defaultSharedData.adminCreds;
+            if (!Array.isArray(appData.adminBalances) || appData.adminBalances.length === 0) {
+                appData.adminBalances = [{ id: 1, name: appData.adminCreds.displayName || "Main Admin", amount: 0 }];
+            }
             if (!appData.paymentSettings) appData.paymentSettings = defaultSharedData.paymentSettings;
             if (!appData.whatsappTemplates) appData.whatsappTemplates = defaultSharedData.whatsappTemplates;
             if (!appData.currentMonth) appData.currentMonth = "2026-11";
@@ -153,6 +159,7 @@
 
             appData.loans.forEach(l => {
                 if (!Array.isArray(l.repayments)) l.repayments = [];
+                if (typeof l.deleted !== 'boolean') l.deleted = false;
             });
 
             appData.members.forEach(m => {
@@ -183,6 +190,7 @@
         function getSharedPayload() {
             return {
                 adminCreds: appData.adminCreds,
+                adminBalances: appData.adminBalances,
                 paymentSettings: appData.paymentSettings,
                 whatsappTemplates: appData.whatsappTemplates,
                 currentMonth: appData.currentMonth,
@@ -364,6 +372,26 @@
                     ${appData.activeTab === 'queries' ? renderQueriesTab() : ''}
                 </main>
 
+                <!-- Admin Amount Add / Edit Modal -->
+                <div id="adminBalanceModal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
+                    <div class="bg-slate-900 border border-slate-800 p-6 rounded-3xl w-full max-w-md space-y-4 shadow-2xl animate-scale-in">
+                        <h3 id="adminBalanceModalTitle" class="text-lg font-bold text-white">Add Admin Amount</h3>
+                        <input type="hidden" id="editAdminBalanceId">
+                        <div>
+                            <label class="text-xs text-slate-300 mb-1 block">Admin Name</label>
+                            <input type="text" id="adminBalanceName" placeholder="e.g. Co-Admin / Suresh Bhai" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="text-xs text-slate-300 mb-1 block">Amount with Admin (₹)</label>
+                            <input type="number" id="adminBalanceAmount" placeholder="0" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
+                        </div>
+                        <div class="flex justify-end gap-3 pt-2">
+                            <button onclick="closeAdminBalanceModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-sm">Cancel</button>
+                            <button onclick="saveAdminBalanceEntry()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-medium">Save Amount</button>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- UPI & QR Code Modal -->
                 <div id="upiQrModal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
                     <div class="bg-slate-900 border border-slate-800 p-6 rounded-3xl w-full max-w-sm space-y-4 text-center shadow-2xl animate-scale-in">
@@ -445,6 +473,68 @@
         function closeUpiQrModal() { document.getElementById('upiQrModal').classList.add('hidden'); }
         function openSettingsModal() { document.getElementById('settingsModal').classList.remove('hidden'); }
         function closeSettingsModal() { document.getElementById('settingsModal').classList.add('hidden'); }
+
+        function openAdminBalanceModal(id = null) {
+            if (appData.currentUser.role !== 'admin') return;
+            if (id) {
+                const entry = appData.adminBalances.find(a => a.id === id);
+                if (!entry) return;
+                document.getElementById('editAdminBalanceId').value = entry.id;
+                document.getElementById('adminBalanceName').value = entry.name;
+                document.getElementById('adminBalanceAmount').value = entry.amount;
+                document.getElementById('adminBalanceModalTitle').innerText = "Edit Admin Amount";
+            } else {
+                document.getElementById('editAdminBalanceId').value = "";
+                document.getElementById('adminBalanceName').value = "";
+                document.getElementById('adminBalanceAmount').value = "";
+                document.getElementById('adminBalanceModalTitle').innerText = "Add Admin Amount";
+            }
+            document.getElementById('adminBalanceModal').classList.remove('hidden');
+        }
+
+        function closeAdminBalanceModal() {
+            document.getElementById('adminBalanceModal').classList.add('hidden');
+        }
+
+        function saveAdminBalanceEntry() {
+            if (appData.currentUser.role !== 'admin') return;
+            const idVal = document.getElementById('editAdminBalanceId').value;
+            const nameVal = document.getElementById('adminBalanceName').value.trim();
+            const amountVal = parseFloat(document.getElementById('adminBalanceAmount').value);
+
+            if (!nameVal || isNaN(amountVal)) {
+                alert('Kripya Admin ka naam aur valid amount bharein.');
+                return;
+            }
+
+            if (idVal) {
+                const entry = appData.adminBalances.find(a => a.id === parseInt(idVal));
+                if (entry) {
+                    entry.name = nameVal;
+                    entry.amount = amountVal;
+                }
+            } else {
+                const newId = appData.adminBalances.length > 0
+                    ? Math.max(...appData.adminBalances.map(a => a.id)) + 1
+                    : 1;
+                appData.adminBalances.push({ id: newId, name: nameVal, amount: amountVal });
+            }
+
+            closeAdminBalanceModal();
+            saveAppData();
+        }
+
+        function deleteAdminBalanceEntry(id) {
+            if (appData.currentUser.role !== 'admin') return;
+            if (appData.adminBalances.length <= 1) {
+                alert('Kam se kam ek admin entry honi chahiye.');
+                return;
+            }
+            if (confirm('Kya aap is admin entry ko hatana chahte hain?')) {
+                appData.adminBalances = appData.adminBalances.filter(a => a.id !== id);
+                saveAppData();
+            }
+        }
 
         function saveAdminSettings() {
             let newName = document.getElementById('newAdminName').value.trim();
@@ -754,7 +844,7 @@
                 });
                 let totalMemberSavings = memberTotalPaidMonths * 500;
                 let memberLoans = appData.loans.filter(l => l.memberName === memberName);
-                let memberActiveLoan = memberLoans.reduce((acc, l) => {
+                let memberActiveLoan = memberLoans.filter(l => !l.deleted).reduce((acc, l) => {
                     let repaid = (l.repayments || []).reduce((s, r) => r.type === 'Principal' ? s + r.amount : s, 0);
                     return acc + (l.amount - repaid);
                 }, 0);
@@ -821,13 +911,15 @@
 
             let totalInterest = 0;
             appData.loans.forEach(l => { (l.repayments || []).forEach(r => { if (r.type === 'Interest') totalInterest += r.amount; }); });
-            let activeLoansTotal = appData.loans.filter(l => l.status === 'Active').reduce((acc, l) => {
+            let activeLoansTotal = appData.loans.filter(l => !l.deleted && l.status === 'Active').reduce((acc, l) => {
                 let repaidPrincipal = (l.repayments || []).reduce((sum, r) => r.type === 'Principal' ? sum + r.amount : sum, 0);
                 return acc + (l.amount - repaidPrincipal);
             }, 0);
             let totalPenaltiesNet = appData.expenses.reduce((acc, e) => e.type === 'Income' ? acc + e.amount : acc - e.amount, 0);
             let netTotalFund = totalSavings + totalInterest + totalPenaltiesNet;
             let availableCash = netTotalFund - activeLoansTotal;
+
+            const totalAdminsAmount = appData.adminBalances.reduce((sum, a) => sum + (parseFloat(a.amount) || 0), 0);
 
             return `
                 <div class="space-y-6">
@@ -851,6 +943,67 @@
                         <div class="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-xl">
                             <p class="text-xs text-slate-400 font-medium">Net Total Fund</p>
                             <h3 class="text-xl font-bold text-indigo-400 mt-1">₹${netTotalFund}</h3>
+                        </div>
+                    </div>
+
+                    <!-- Admin Cash / Amount Table -->
+                    <div class="bg-slate-900/60 border border-slate-800 p-6 rounded-2xl shadow-xl space-y-4">
+                        <div class="flex flex-wrap justify-between items-center gap-4">
+                            <div>
+                                <h4 class="text-base font-bold text-white flex items-center gap-2">
+                                    <i data-lucide="wallet" class="w-5 h-5 text-emerald-400"></i>
+                                    Admin Amount / Cash Holding Table
+                                </h4>
+                                <p class="text-xs text-slate-400">Har admin ke paas kitna amount hai wo dekhein, add karein ya edit karein.</p>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <div class="bg-emerald-950/60 border border-emerald-500/30 px-4 py-2 rounded-xl text-right">
+                                    <span class="text-[11px] text-emerald-300 block">Sabhi Admins Ka Total Amount</span>
+                                    <span class="text-base font-bold text-emerald-400">₹${totalAdminsAmount}</span>
+                                </div>
+                                <button onclick="openAdminBalanceModal()" class="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2.5 rounded-xl text-xs font-medium transition shadow-lg">
+                                    <i data-lucide="plus" class="w-4 h-4"></i> Add Admin
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="border-b border-slate-800 text-slate-400 text-xs uppercase">
+                                        <th class="p-3">#</th>
+                                        <th class="p-3">Admin Name</th>
+                                        <th class="p-3">Amount with Admin</th>
+                                        <th class="p-3 text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-800 text-sm">
+                                    ${appData.adminBalances.map((a, idx) => `
+                                        <tr class="hover:bg-slate-800/40 transition">
+                                            <td class="p-3 text-slate-400">${idx + 1}</td>
+                                            <td class="p-3 font-semibold text-white">${a.name}</td>
+                                            <td class="p-3 font-bold text-emerald-400">₹${a.amount}</td>
+                                            <td class="p-3 text-right space-x-2">
+                                                <button onclick="openAdminBalanceModal(${a.id})" class="px-3 py-1.5 bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white rounded-lg text-xs font-medium transition inline-flex items-center gap-1">
+                                                    <i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Edit
+                                                </button>
+                                                ${appData.adminBalances.length > 1 ? `
+                                                    <button onclick="deleteAdminBalanceEntry(${a.id})" class="px-2.5 py-1.5 bg-rose-600/20 text-rose-400 hover:bg-rose-600 hover:text-white rounded-lg text-xs font-medium transition inline-flex items-center gap-1" title="Delete">
+                                                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                                    </button>
+                                                ` : ''}
+                                            </td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                                <tfoot>
+                                    <tr class="bg-slate-800/60 border-t border-slate-700 text-sm font-bold">
+                                        <td class="p-3 text-slate-300" colspan="2">Total All Admins Amount</td>
+                                        <td class="p-3 text-emerald-400 text-base">₹${totalAdminsAmount}</td>
+                                        <td class="p-3"></td>
+                                    </tr>
+                                </tfoot>
+                            </table>
                         </div>
                     </div>
 
@@ -1188,63 +1341,134 @@
             }
         }
 
+        function deleteLoan(id) {
+            if (appData.currentUser.role !== 'admin') return;
+            if (confirm('Kya aap is loan entry ko delete karna chahte hain? (Principal aur Interest repayments mein koi badlav nahi hoga aur loan Deleted Items mein dikhega.)')) {
+                const loan = appData.loans.find(l => l.id === id);
+                if (loan) {
+                    loan.deleted = true;
+                    loan.deletedAt = new Date().toISOString().split('T')[0];
+                    saveAppData();
+                }
+            }
+        }
+
         function renderLoansTab() {
             const isAdmin = appData.currentUser.role === 'admin';
             const memberName = isAdmin ? null : appData.currentUser.name;
-            const loansList = isAdmin ? appData.loans : appData.loans.filter(l => l.memberName === memberName);
+            const allUserLoans = isAdmin ? appData.loans : appData.loans.filter(l => l.memberName === memberName);
+            const activeLoansList = allUserLoans.filter(l => !l.deleted);
+            const deletedLoansList = allUserLoans.filter(l => !!l.deleted);
 
             return `
-                <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-6 shadow-xl">
-                    <div class="flex flex-wrap justify-between items-center gap-4">
-                        <div>
-                            <h2 class="text-xl font-bold text-white">${isAdmin ? 'અમારી બચત | અમારી સુરક્ષા - Loan Ledger' : 'અમારી બચત | અમારી સુરક્ષા - My Loans'}</h2>
-                            <p class="text-xs text-slate-400">${isAdmin ? 'Members ko diye gaye loan aur interest repayment track karein.' : 'Aapke active ya closed loans.'}</p>
+                <div class="space-y-6">
+                    <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-6 shadow-xl">
+                        <div class="flex flex-wrap justify-between items-center gap-4">
+                            <div>
+                                <h2 class="text-xl font-bold text-white">${isAdmin ? 'અમારી બચત | અમારી સુરક્ષા - Loan Ledger' : 'અમારી બચત | અમારી સુરક્ષા - My Loans'}</h2>
+                                <p class="text-xs text-slate-400">${isAdmin ? 'Members ko diye gaye loan aur interest repayment track karein.' : 'Aapke active ya closed loans.'}</p>
+                            </div>
+                            ${isAdmin ? `<button onclick="openLoanModal()" class="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition"><i data-lucide="plus-circle" class="w-4 h-4"></i> Issue New Loan</button>` : ''}
                         </div>
-                        ${isAdmin ? `<button onclick="openLoanModal()" class="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition"><i data-lucide="plus-circle" class="w-4 h-4"></i> Issue New Loan</button>` : ''}
+
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="border-b border-slate-800 text-slate-400 text-xs uppercase">
+                                        <th class="p-3">Member</th>
+                                        <th class="p-3">Loan Amount</th>
+                                        <th class="p-3">Interest Rate</th>
+                                        <th class="p-3">Principal Repaid</th>
+                                        <th class="p-3">Balance Due</th>
+                                        <th class="p-3">Status</th>
+                                        <th class="p-3 text-right">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-800 text-sm">
+                                    ${activeLoansList.length === 0 ? `
+                                        <tr><td colspan="7" class="p-4 text-center text-slate-400 italic">Koi active loan record nahi hai.</td></tr>
+                                    ` : ''}
+                                    ${activeLoansList.map(l => {
+                                        const repaidPrincipal = (l.repayments || []).reduce((sum, r) => r.type === 'Principal' ? sum + r.amount : sum, 0);
+                                        const repaidInterest = (l.repayments || []).reduce((sum, r) => r.type === 'Interest' ? sum + r.amount : sum, 0);
+                                        const balance = l.amount - repaidPrincipal;
+                                        const status = balance <= 0 ? 'Settled' : 'Active';
+
+                                        return `
+                                            <tr class="hover:bg-slate-800/40 transition">
+                                                <td class="p-3 font-semibold text-white">${l.memberName}</td>
+                                                <td class="p-3 text-indigo-400 font-medium">₹${l.amount}</td>
+                                                <td class="p-3 text-slate-300">${l.rate}% /mo</td>
+                                                <td class="p-3 text-emerald-400">₹${repaidPrincipal} <span class="text-[11px] text-cyan-400">(Int: ₹${repaidInterest})</span></td>
+                                                <td class="p-3 text-amber-400 font-bold">₹${balance}</td>
+                                                <td class="p-3">
+                                                    <span class="px-3 py-1 rounded-full text-xs font-semibold ${status === 'Settled' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}">
+                                                        ${status}
+                                                    </span>
+                                                </td>
+                                                <td class="p-3 text-right space-x-2">
+                                                    ${isAdmin && status === 'Active' ? `
+                                                        <button onclick="openRepaymentModal(${l.id})" class="px-3 py-1.5 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600 hover:text-white rounded-lg text-xs font-medium transition">Add Repayment</button>
+                                                    ` : ''}
+                                                    <button onclick="downloadPDFReceipt(${l.id})" class="px-2.5 py-1.5 bg-purple-600/20 text-purple-400 hover:bg-purple-600 hover:text-white rounded-lg text-xs font-medium transition" title="Receipt"><i data-lucide="file-text" class="w-3.5 h-3.5"></i></button>
+                                                    ${isAdmin ? `
+                                                        <button onclick="deleteLoan(${l.id})" class="px-2.5 py-1.5 bg-rose-600/20 text-rose-400 hover:bg-rose-600 hover:text-white rounded-lg text-xs font-medium transition inline-flex items-center gap-1" title="Delete Loan"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Delete</button>
+                                                    ` : ''}
+                                                </td>
+                                            </tr>
+                                        `;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
 
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-left border-collapse">
-                            <thead>
-                                <tr class="border-b border-slate-800 text-slate-400 text-xs uppercase">
-                                    <th class="p-3">Member</th>
-                                    <th class="p-3">Loan Amount</th>
-                                    <th class="p-3">Interest Rate</th>
-                                    <th class="p-3">Principal Repaid</th>
-                                    <th class="p-3">Balance Due</th>
-                                    <th class="p-3">Status</th>
-                                    <th class="p-3 text-right">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody class="divide-y divide-slate-800 text-sm">
-                                ${loansList.map(l => {
-                                    const repaidPrincipal = (l.repayments || []).reduce((sum, r) => r.type === 'Principal' ? sum + r.amount : sum, 0);
-                                    const balance = l.amount - repaidPrincipal;
-                                    const status = balance <= 0 ? 'Settled' : 'Active';
+                    <!-- Deleted Loans Section (Delete Items) -->
+                    <div class="bg-slate-900/60 border border-rose-500/20 rounded-2xl p-6 space-y-4 shadow-xl">
+                        <div>
+                            <h3 class="text-lg font-bold text-rose-300 flex items-center gap-2">
+                                <i data-lucide="archive" class="w-5 h-5 text-rose-400"></i>
+                                Deleted Loans (Delete Items)
+                            </h3>
+                            <p class="text-xs text-slate-400">Delete ki gayi loan entries yahan dikhti hain; inke principal aur interest repayments mein koi badlav nahi hota.</p>
+                        </div>
 
-                                    return `
-                                        <tr class="hover:bg-slate-800/40 transition">
-                                            <td class="p-3 font-semibold text-white">${l.memberName}</td>
-                                            <td class="p-3 text-indigo-400 font-medium">₹${l.amount}</td>
-                                            <td class="p-3 text-slate-300">${l.rate}% /mo</td>
-                                            <td class="p-3 text-emerald-400">₹${repaidPrincipal}</td>
-                                            <td class="p-3 text-amber-400 font-bold">₹${balance}</td>
-                                            <td class="p-3">
-                                                <span class="px-3 py-1 rounded-full text-xs font-semibold ${status === 'Settled' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}">
-                                                    ${status}
-                                                </span>
-                                            </td>
-                                            <td class="p-3 text-right space-x-2">
-                                                ${isAdmin && status === 'Active' ? `
-                                                    <button onclick="openRepaymentModal(${l.id})" class="px-3 py-1.5 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600 hover:text-white rounded-lg text-xs font-medium transition">Add Repayment</button>
-                                                ` : ''}
-                                                <button onclick="downloadPDFReceipt(${l.id})" class="px-2.5 py-1.5 bg-purple-600/20 text-purple-400 hover:bg-purple-600 hover:text-white rounded-lg text-xs font-medium transition" title="Receipt"><i data-lucide="file-text" class="w-3.5 h-3.5"></i></button>
-                                            </td>
-                                        </tr>
-                                    `;
-                                }).join('')}
-                            </tbody>
-                        </table>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="border-b border-slate-800 text-slate-400 text-xs uppercase">
+                                        <th class="p-3">Member</th>
+                                        <th class="p-3">Loan Amount</th>
+                                        <th class="p-3">Principal Repaid</th>
+                                        <th class="p-3">Interest Repaid</th>
+                                        <th class="p-3">Deleted Date</th>
+                                        <th class="p-3 text-right">Receipt</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-800 text-sm">
+                                    ${deletedLoansList.length === 0 ? `
+                                        <tr><td colspan="6" class="p-4 text-center text-slate-400 italic">Koi deleted loan entry nahi hai.</td></tr>
+                                    ` : ''}
+                                    ${deletedLoansList.map(l => {
+                                        const repaidPrincipal = (l.repayments || []).reduce((sum, r) => r.type === 'Principal' ? sum + r.amount : sum, 0);
+                                        const repaidInterest = (l.repayments || []).reduce((sum, r) => r.type === 'Interest' ? sum + r.amount : sum, 0);
+
+                                        return `
+                                            <tr class="hover:bg-slate-800/40 transition opacity-85">
+                                                <td class="p-3 font-semibold text-white">${l.memberName}</td>
+                                                <td class="p-3 text-indigo-400 font-medium">₹${l.amount}</td>
+                                                <td class="p-3 text-emerald-400 font-medium">₹${repaidPrincipal}</td>
+                                                <td class="p-3 text-cyan-400 font-medium">₹${repaidInterest}</td>
+                                                <td class="p-3 text-rose-300 text-xs">${l.deletedAt || l.date}</td>
+                                                <td class="p-3 text-right">
+                                                    <button onclick="downloadPDFReceipt(${l.id})" class="px-2.5 py-1.5 bg-purple-600/20 text-purple-400 hover:bg-purple-600 hover:text-white rounded-lg text-xs font-medium transition" title="Receipt"><i data-lucide="file-text" class="w-3.5 h-3.5"></i></button>
+                                                </td>
+                                            </tr>
+                                        `;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
 
@@ -1324,7 +1548,7 @@
             let rate = parseFloat(document.getElementById('loanRate').value);
             let date = document.getElementById('loanDate').value || new Date().toISOString().split('T')[0];
             if (!amount) { alert('Loan amount dalein.'); return; }
-            appData.loans.push({ id: Date.now(), memberName, amount, rate, date, status: "Active", repayments: [] });
+            appData.loans.push({ id: Date.now(), memberName, amount, rate, date, status: "Active", deleted: false, repayments: [] });
             closeLoanModal();
             saveAppData();
         }
