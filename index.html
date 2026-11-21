@@ -633,6 +633,165 @@
             XLSX.writeFile(wb, `Amari_Bachat_Suraksha_Audit_${new Date().toISOString().split('T')[0]}.xlsx`);
         }
 
+        function downloadDashboardMetricPDF(metricKey) {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+
+            let totalSavingsCount = 0;
+            let savingsRows = [];
+            Object.keys(appData.savings).forEach(k => {
+                let val = appData.savings[k];
+                let parts = k.split('_');
+                let mId = parseInt(parts.pop());
+                let monthKey = parts.join('_');
+                let member = appData.members.find(x => x.id === mId);
+                let mName = member ? member.name : `Member #${mId}`;
+
+                if (val === true) {
+                    totalSavingsCount += 1;
+                    savingsRows.push([mName, monthKey, "1 Month (Paid)", "Rs. 500"]);
+                } else if (val && typeof val === 'object' && val.paid) {
+                    let adv = val.advanceMonths || 0;
+                    let monthsCredited = 1 + adv;
+                    totalSavingsCount += monthsCredited;
+                    savingsRows.push([mName, monthKey, `1 Paid + ${adv} Advance (${monthsCredited}M)`, `Rs. ${monthsCredited * 500}`]);
+                }
+            });
+            let totalSavings = totalSavingsCount * 500;
+
+            let totalInterest = 0;
+            let interestRows = [];
+            appData.loans.forEach(l => {
+                (l.repayments || []).forEach(r => {
+                    if (r.type === 'Interest') {
+                        totalInterest += r.amount;
+                        interestRows.push([
+                            r.date || l.date || "-",
+                            l.memberName,
+                            `Loan #${l.id} (Amt: Rs. ${l.amount})`,
+                            l.deleted ? "Deleted Loan" : "Active Loan",
+                            `Rs. ${r.amount}`
+                        ]);
+                    }
+                });
+            });
+
+            let activeLoansTotal = 0;
+            let activeLoanRows = [];
+            appData.loans.filter(l => !l.deleted && l.status === 'Active').forEach(l => {
+                let repaidPrincipal = (l.repayments || []).reduce((sum, r) => r.type === 'Principal' ? sum + r.amount : sum, 0);
+                let balance = l.amount - repaidPrincipal;
+                if (balance > 0) {
+                    activeLoansTotal += balance;
+                    activeLoanRows.push([
+                        l.memberName,
+                        l.date || "-",
+                        `Rs. ${l.amount}`,
+                        `Rs. ${repaidPrincipal}`,
+                        `Rs. ${balance}`
+                    ]);
+                }
+            });
+
+            let totalPenaltiesNet = appData.expenses.reduce((acc, e) => e.type === 'Income' ? acc + e.amount : acc - e.amount, 0);
+            let netTotalFund = totalSavings + totalInterest + totalPenaltiesNet;
+            let availableCash = netTotalFund - activeLoansTotal;
+
+            doc.setFillColor(16, 185, 129);
+            doc.rect(0, 0, 210, 32, "F");
+            doc.setTextColor(255, 255, 255);
+            doc.setFontSize(15);
+            doc.text("Amari Bachat | Amari Suraksha - Dashboard Report", 14, 20);
+
+            doc.setTextColor(40, 40, 40);
+            doc.setFontSize(10);
+            doc.text(`Generated Date: ${new Date().toISOString().split('T')[0]} | Current Month: ${appData.currentMonth}`, 14, 41);
+
+            let title = "";
+            let summaryLines = [];
+            let headers = [];
+            let bodyRows = [];
+            let fileName = "Dashboard_Report.pdf";
+
+            if (metricKey === "savings") {
+                title = "Total Savings Source & Calculation Report";
+                summaryLines = [
+                    `Formula: Total Paid/Advance Months (${totalSavingsCount}) x Rs. 500 = Rs. ${totalSavings}`,
+                    `Total Savings Amount: Rs. ${totalSavings}`
+                ];
+                headers = ["Member", "Month Key", "Months Credited", "Amount"];
+                bodyRows = savingsRows.length > 0 ? savingsRows : [["-", "-", "No savings entries", "Rs. 0"]];
+                fileName = "Total_Savings_Report.pdf";
+            } else if (metricKey === "interest") {
+                title = "Interest Earned Source Report";
+                summaryLines = [
+                    `Formula: Sum of all repayments with Type = 'Interest' across all loans (including historical/deleted loans)`,
+                    `Total Interest Earned: Rs. ${totalInterest}`
+                ];
+                headers = ["Date", "Member", "Loan Reference", "Loan Status", "Interest Amount"];
+                bodyRows = interestRows.length > 0 ? interestRows : [["-", "-", "-", "No interest entries", "Rs. 0"]];
+                fileName = "Interest_Earned_Report.pdf";
+            } else if (metricKey === "active_loans") {
+                title = "Active Loans Out Source Report";
+                summaryLines = [
+                    `Formula: Sum of (Loan Amount - Principal Repaid) for non-deleted Active loans`,
+                    `Total Active Loans Out: Rs. ${activeLoansTotal}`
+                ];
+                headers = ["Member", "Issue Date", "Loan Amount", "Principal Repaid", "Balance Due"];
+                bodyRows = activeLoanRows.length > 0 ? activeLoanRows : [["-", "-", "-", "-", "No active loans"]];
+                fileName = "Active_Loans_Out_Report.pdf";
+            } else if (metricKey === "available_cash") {
+                title = "Available Cash Calculation Report";
+                summaryLines = [
+                    `Net Total Fund = Savings (Rs. ${totalSavings}) + Interest (Rs. ${totalInterest}) + Net Penalties (Rs. ${totalPenaltiesNet}) = Rs. ${netTotalFund}`,
+                    `Available Cash = Net Total Fund (Rs. ${netTotalFund}) - Active Loans Out (Rs. ${activeLoansTotal}) = Rs. ${availableCash}`
+                ];
+                headers = ["Component", "Details", "Amount"];
+                bodyRows = [
+                    ["Total Savings", `${totalSavingsCount} months x Rs. 500`, `Rs. ${totalSavings}`],
+                    ["Interest Earned", "All interest repayments", `Rs. ${totalInterest}`],
+                    ["Net Penalties", "Penalty income minus expenses", `Rs. ${totalPenaltiesNet}`],
+                    ["Less: Active Loans Out", "Pending principal on active loans", `- Rs. ${activeLoansTotal}`],
+                    ["Available Cash", "Final cash available", `Rs. ${availableCash}`]
+                ];
+                fileName = "Available_Cash_Report.pdf";
+            } else {
+                title = "Net Total Fund Calculation Report";
+                summaryLines = [
+                    `Formula: Total Savings (Rs. ${totalSavings}) + Interest Earned (Rs. ${totalInterest}) + Net Penalties (Rs. ${totalPenaltiesNet})`,
+                    `Net Total Fund: Rs. ${netTotalFund}`
+                ];
+                headers = ["Fund Source", "Basis", "Amount"];
+                bodyRows = [
+                    ["Total Savings", `${totalSavingsCount} paid/advance months`, `Rs. ${totalSavings}`],
+                    ["Interest Earned", "Interest repayments received", `Rs. ${totalInterest}`],
+                    ["Net Penalties", "Penalties/Income minus Expense", `Rs. ${totalPenaltiesNet}`],
+                    ["Net Total Fund", "Combined fund total", `Rs. ${netTotalFund}`]
+                ];
+                fileName = "Net_Total_Fund_Report.pdf";
+            }
+
+            doc.setFontSize(13);
+            doc.setTextColor(15, 23, 42);
+            doc.text(title, 14, 52);
+
+            doc.setFontSize(10);
+            doc.setTextColor(51, 65, 85);
+            let yPos = 60;
+            summaryLines.forEach(line => {
+                doc.text(line, 14, yPos);
+                yPos += 7;
+            });
+
+            doc.autoTable({
+                head: [headers],
+                body: bodyRows,
+                startY: yPos + 4
+            });
+
+            doc.save(fileName);
+        }
+
         function checkMemberPaidStatus(memberId, targetMonth) {
             let directKey = `${targetMonth}_${memberId}`;
             if (appData.savings[directKey] === true || (typeof appData.savings[directKey] === 'object' && appData.savings[directKey].paid)) {
@@ -924,26 +1083,46 @@
             return `
                 <div class="space-y-6">
                     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-                        <div class="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-xl">
-                            <p class="text-xs text-slate-400 font-medium">Total Savings</p>
+                        <button onclick="downloadDashboardMetricPDF('savings')" class="text-left bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-emerald-500/40 p-5 rounded-2xl shadow-xl transition cursor-pointer group" title="Click to download PDF report">
+                            <div class="flex items-center justify-between">
+                                <p class="text-xs text-slate-400 font-medium">Total Savings</p>
+                                <i data-lucide="download" class="w-3.5 h-3.5 text-slate-500 group-hover:text-emerald-400 transition"></i>
+                            </div>
                             <h3 class="text-xl font-bold text-emerald-400 mt-1">₹${totalSavings}</h3>
-                        </div>
-                        <div class="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-xl">
-                            <p class="text-xs text-slate-400 font-medium">Interest Earned</p>
+                            <p class="text-[10px] text-slate-500 mt-1">Click for PDF Report</p>
+                        </button>
+                        <button onclick="downloadDashboardMetricPDF('interest')" class="text-left bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-cyan-500/40 p-5 rounded-2xl shadow-xl transition cursor-pointer group" title="Click to download PDF report">
+                            <div class="flex items-center justify-between">
+                                <p class="text-xs text-slate-400 font-medium">Interest Earned</p>
+                                <i data-lucide="download" class="w-3.5 h-3.5 text-slate-500 group-hover:text-cyan-400 transition"></i>
+                            </div>
                             <h3 class="text-xl font-bold text-cyan-400 mt-1">₹${totalInterest}</h3>
-                        </div>
-                        <div class="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-xl">
-                            <p class="text-xs text-slate-400 font-medium">Active Loans Out</p>
+                            <p class="text-[10px] text-slate-500 mt-1">Click for PDF Report</p>
+                        </button>
+                        <button onclick="downloadDashboardMetricPDF('active_loans')" class="text-left bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-amber-500/40 p-5 rounded-2xl shadow-xl transition cursor-pointer group" title="Click to download PDF report">
+                            <div class="flex items-center justify-between">
+                                <p class="text-xs text-slate-400 font-medium">Active Loans Out</p>
+                                <i data-lucide="download" class="w-3.5 h-3.5 text-slate-500 group-hover:text-amber-400 transition"></i>
+                            </div>
                             <h3 class="text-xl font-bold text-amber-400 mt-1">₹${activeLoansTotal}</h3>
-                        </div>
-                        <div class="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-xl">
-                            <p class="text-xs text-slate-400 font-medium">Available Cash</p>
+                            <p class="text-[10px] text-slate-500 mt-1">Click for PDF Report</p>
+                        </button>
+                        <button onclick="downloadDashboardMetricPDF('available_cash')" class="text-left bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-green-500/40 p-5 rounded-2xl shadow-xl transition cursor-pointer group" title="Click to download PDF report">
+                            <div class="flex items-center justify-between">
+                                <p class="text-xs text-slate-400 font-medium">Available Cash</p>
+                                <i data-lucide="download" class="w-3.5 h-3.5 text-slate-500 group-hover:text-green-400 transition"></i>
+                            </div>
                             <h3 class="text-xl font-bold text-green-400 mt-1">₹${availableCash}</h3>
-                        </div>
-                        <div class="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-xl">
-                            <p class="text-xs text-slate-400 font-medium">Net Total Fund</p>
+                            <p class="text-[10px] text-slate-500 mt-1">Click for PDF Report</p>
+                        </button>
+                        <button onclick="downloadDashboardMetricPDF('net_fund')" class="text-left bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-indigo-500/40 p-5 rounded-2xl shadow-xl transition cursor-pointer group" title="Click to download PDF report">
+                            <div class="flex items-center justify-between">
+                                <p class="text-xs text-slate-400 font-medium">Net Total Fund</p>
+                                <i data-lucide="download" class="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-400 transition"></i>
+                            </div>
                             <h3 class="text-xl font-bold text-indigo-400 mt-1">₹${netTotalFund}</h3>
-                        </div>
+                            <p class="text-[10px] text-slate-500 mt-1">Click for PDF Report</p>
+                        </button>
                     </div>
 
                     <!-- Admin Cash / Amount Table -->
@@ -1353,6 +1532,63 @@
             }
         }
 
+        function openEditLoanModal(id) {
+            if (appData.currentUser.role !== 'admin') return;
+            const loan = appData.loans.find(l => l.id === id);
+            if (!loan) return;
+
+            const repaidPrincipal = (loan.repayments || []).reduce((sum, r) => r.type === 'Principal' ? sum + r.amount : sum, 0);
+            const repaidInterest = (loan.repayments || []).reduce((sum, r) => r.type === 'Interest' ? sum + r.amount : sum, 0);
+
+            document.getElementById('editLoanId').value = loan.id;
+            document.getElementById('editLoanMemberLabel').innerText = `Member: ${loan.memberName} (Issue Date: ${loan.date || '-'})`;
+            document.getElementById('editLoanAmount').value = loan.amount;
+            document.getElementById('editLoanRate').value = loan.rate;
+            document.getElementById('editLoanTotalPrincipal').value = repaidPrincipal;
+            document.getElementById('editLoanTotalInterest').value = repaidInterest;
+            document.getElementById('editLoanModal').classList.remove('hidden');
+        }
+
+        function closeEditLoanModal() {
+            document.getElementById('editLoanModal').classList.add('hidden');
+        }
+
+        function saveEditedLoan() {
+            if (appData.currentUser.role !== 'admin') return;
+            const loanId = parseInt(document.getElementById('editLoanId').value);
+            const amount = parseFloat(document.getElementById('editLoanAmount').value);
+            const rate = parseFloat(document.getElementById('editLoanRate').value);
+            const targetPrincipal = parseFloat(document.getElementById('editLoanTotalPrincipal').value);
+            const targetInterest = parseFloat(document.getElementById('editLoanTotalInterest').value);
+
+            if (isNaN(amount) || amount <= 0 || isNaN(rate) || isNaN(targetPrincipal) || targetPrincipal < 0 || isNaN(targetInterest) || targetInterest < 0) {
+                alert('Kripya sabhi valid values bharein.');
+                return;
+            }
+
+            const loan = appData.loans.find(l => l.id === loanId);
+            if (!loan) return;
+
+            const todayStr = new Date().toISOString().split('T')[0];
+            const otherRepayments = (loan.repayments || []).filter(r => r.type !== 'Principal' && r.type !== 'Interest');
+            const updatedRepayments = [...otherRepayments];
+
+            if (targetPrincipal > 0) {
+                updatedRepayments.push({ date: todayStr, amount: targetPrincipal, type: 'Principal' });
+            }
+            if (targetInterest > 0) {
+                updatedRepayments.push({ date: todayStr, amount: targetInterest, type: 'Interest' });
+            }
+
+            loan.amount = amount;
+            loan.rate = rate;
+            loan.repayments = updatedRepayments;
+            loan.status = (amount - targetPrincipal) <= 0 ? 'Settled' : 'Active';
+
+            closeEditLoanModal();
+            saveAppData();
+        }
+
         function renderLoansTab() {
             const isAdmin = appData.currentUser.role === 'admin';
             const memberName = isAdmin ? null : appData.currentUser.name;
@@ -1366,7 +1602,7 @@
                         <div class="flex flex-wrap justify-between items-center gap-4">
                             <div>
                                 <h2 class="text-xl font-bold text-white">${isAdmin ? 'અમારી બચત | અમારી સુરક્ષા - Loan Ledger' : 'અમારી બચત | અમારી સુરક્ષા - My Loans'}</h2>
-                                <p class="text-xs text-slate-400">${isAdmin ? 'Members ko diye gaye loan aur interest repayment track karein.' : 'Aapke active ya closed loans.'}</p>
+                                <p class="text-xs text-slate-400">${isAdmin ? 'Active loan row par click karke Principal aur Interest ko edit karein.' : 'Aapke active ya closed loans.'}</p>
                             </div>
                             ${isAdmin ? `<button onclick="openLoanModal()" class="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition"><i data-lucide="plus-circle" class="w-4 h-4"></i> Issue New Loan</button>` : ''}
                         </div>
@@ -1395,7 +1631,7 @@
                                         const status = balance <= 0 ? 'Settled' : 'Active';
 
                                         return `
-                                            <tr class="hover:bg-slate-800/40 transition">
+                                            <tr onclick="${isAdmin && status === 'Active' ? `openEditLoanModal(${l.id})` : ''}" class="hover:bg-slate-800/40 transition ${isAdmin && status === 'Active' ? 'cursor-pointer' : ''}">
                                                 <td class="p-3 font-semibold text-white">${l.memberName}</td>
                                                 <td class="p-3 text-indigo-400 font-medium">₹${l.amount}</td>
                                                 <td class="p-3 text-slate-300">${l.rate}% /mo</td>
@@ -1406,8 +1642,9 @@
                                                         ${status}
                                                     </span>
                                                 </td>
-                                                <td class="p-3 text-right space-x-2">
+                                                <td onclick="event.stopPropagation()" class="p-3 text-right space-x-2">
                                                     ${isAdmin && status === 'Active' ? `
+                                                        <button onclick="openEditLoanModal(${l.id})" class="px-2.5 py-1.5 bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white rounded-lg text-xs font-medium transition">Edit</button>
                                                         <button onclick="openRepaymentModal(${l.id})" class="px-3 py-1.5 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600 hover:text-white rounded-lg text-xs font-medium transition">Add Repayment</button>
                                                     ` : ''}
                                                     <button onclick="downloadPDFReceipt(${l.id})" class="px-2.5 py-1.5 bg-purple-600/20 text-purple-400 hover:bg-purple-600 hover:text-white rounded-lg text-xs font-medium transition" title="Receipt"><i data-lucide="file-text" class="w-3.5 h-3.5"></i></button>
@@ -1468,6 +1705,39 @@
                                     }).join('')}
                                 </tbody>
                             </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Edit Active Loan Modal -->
+                <div id="editLoanModal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
+                    <div class="bg-slate-900 border border-slate-800 p-6 rounded-3xl w-full max-w-md space-y-4 shadow-2xl animate-scale-in">
+                        <h3 class="text-lg font-bold text-white">Edit Loan Details (Principal & Interest)</h3>
+                        <p id="editLoanMemberLabel" class="text-xs text-indigo-300 font-semibold"></p>
+                        <input type="hidden" id="editLoanId">
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="text-xs text-slate-300 mb-1 block">Loan Amount (₹)</label>
+                                <input type="number" id="editLoanAmount" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
+                            </div>
+                            <div>
+                                <label class="text-xs text-slate-300 mb-1 block">Interest Rate (%/mo)</label>
+                                <input type="number" step="0.1" id="editLoanRate" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="text-xs text-emerald-300 mb-1 block">Total Principal Paid (₹)</label>
+                                <input type="number" id="editLoanTotalPrincipal" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
+                            </div>
+                            <div>
+                                <label class="text-xs text-cyan-300 mb-1 block">Total Interest Paid (₹)</label>
+                                <input type="number" id="editLoanTotalInterest" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
+                            </div>
+                        </div>
+                        <div class="flex justify-end gap-3 pt-2">
+                            <button onclick="closeEditLoanModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-sm">Cancel</button>
+                            <button onclick="saveEditedLoan()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm font-medium">Update Loan</button>
                         </div>
                     </div>
                 </div>
