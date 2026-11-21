@@ -1,0 +1,1595 @@
+html
+<!DOCTYPE html>
+<html lang="gu">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>અમારી બચત | અમારી સુરક્ષા - Management Portal</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- SheetJS for Excel Export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- jsPDF & AutoTable for PDF Export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+    <!-- Chart.js for Visual Analytics -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Poppins', sans-serif; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes scaleIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+        .animate-fade-in { animation: fadeIn 0.35s ease-out forwards; }
+        .animate-scale-in { animation: scaleIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 min-h-screen text-slate-100 selection:bg-emerald-500 selection:text-white">
+
+    <!-- Cloud Sync Status Banner -->
+    <div id="syncBadge" class="fixed bottom-3 right-3 z-50 bg-slate-900/90 border border-slate-700 px-3 py-1.5 rounded-full text-[11px] flex items-center gap-2 shadow-lg backdrop-blur-md">
+        <span id="syncDot" class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+        <span id="syncText" class="text-slate-300">Connecting to Cloud...</span>
+    </div>
+
+    <div id="app" class="max-w-7xl mx-auto px-4 py-6 animate-fade-in"></div>
+
+    <!-- Firebase SDK (Modular v11 via CDN) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
+        import { getDatabase, ref, set, onValue, get } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyCCYGVycm5lNTZsP_mm_t-i94Ss8Oi8E34",
+            authDomain: "easy-life-2646e.firebaseapp.com",
+            databaseURL: "https://easy-life-2646e-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "easy-life-2646e",
+            storageBucket: "easy-life-2646e.firebasestorage.app",
+            messagingSenderId: "605500823110",
+            appId: "1:605500823110:web:c2bc12d1c2d4d2606f1c47",
+            measurementId: "G-P92HZ2GP7E"
+        };
+
+        const firebaseApp = initializeApp(firebaseConfig);
+        const db = getDatabase(firebaseApp);
+        const sharedDataRef = ref(db, "amari_bachat_suraksha_shared");
+
+        window.dbSync = {
+            saveSharedData: async function(sharedPayload) {
+                try {
+                    updateSyncStatus("saving");
+                    await set(sharedDataRef, sharedPayload);
+                    updateSyncStatus("connected");
+                } catch (err) {
+                    console.error("Firebase Save Error:", err);
+                    updateSyncStatus("error");
+                    alert("Cloud save error: Internet ya Firebase Rules check karein.");
+                }
+            }
+        };
+
+        function updateSyncStatus(state) {
+            const dot = document.getElementById("syncDot");
+            const text = document.getElementById("syncText");
+            if (!dot || !text) return;
+            if (state === "connected") {
+                dot.className = "w-2 h-2 rounded-full bg-emerald-400";
+                text.innerText = "Live Cloud Connected";
+            } else if (state === "saving") {
+                dot.className = "w-2 h-2 rounded-full bg-indigo-400 animate-ping";
+                text.innerText = "Syncing...";
+            } else {
+                dot.className = "w-2 h-2 rounded-full bg-rose-500";
+                text.innerText = "Offline / Sync Error";
+            }
+        }
+
+        // Initial load & real-time listener for all devices
+        onValue(sharedDataRef, (snapshot) => {
+            updateSyncStatus("connected");
+            if (snapshot.exists()) {
+                const cloudData = snapshot.val();
+                window.applyCloudData(cloudData);
+            } else {
+                // First time setup: push default/local data to Firebase
+                window.pushInitialDataToCloud();
+            }
+        }, (error) => {
+            console.error("Firebase Read Error:", error);
+            updateSyncStatus("error");
+        });
+    </script>
+
+    <script>
+        const STORAGE_KEY = "amari_bachat_suraksha_v31";
+        const SESSION_KEY = "amari_bachat_session_v1";
+
+        // Per-device session (so each member stays logged in independently on their phone)
+        let sessionState = JSON.parse(sessionStorage.getItem(SESSION_KEY)) || {
+            currentUser: null,
+            activeTab: "dashboard"
+        };
+
+        const defaultSharedData = {
+            adminCreds: { username: "admin", password: "admin123", displayName: "Main Admin", role: "Super Admin" },
+            paymentSettings: {
+                upiId: "groupadmin@upi",
+                qrImageUrl: "https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=upi://pay?pa=groupadmin@upi&pn=AmariBachatAmariSuraksha&am=500&cu=INR"
+            },
+            whatsappTemplates: {
+                reminderMsg: "Hello {name},\n'અમારી બચત | અમારી સુરક્ષા' ગ્રુપની {month} ની ₹{amount} સેવિંગ્સ જમા કરવાની છેલ્લી તારીખ ૧૦ તારીખ છે. કૃપા કરીને સમયસર પેમેન્ટ કરો જેથી ₹50 પેનલ્ટીથી બચી શકાય. UPI ID: {upi}\nધન્યવાદ!"
+            },
+            currentMonth: "2026-11",
+            members: [
+                { id: 1, name: "Aarav Sharma", age: 28, phone: "9876543210", photo: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150", joinMonth: "2026-01" },
+                { id: 2, name: "Rohan Verma", age: 32, phone: "9876543211", photo: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150", joinMonth: "2026-01" },
+                { id: 3, name: "Amit Patel", age: 25, phone: "9876543212", photo: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150", joinMonth: "2026-02" },
+                { id: 4, name: "Priya Singh", age: 29, phone: "9876543213", photo: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150", joinMonth: "2026-02" }
+            ],
+            savings: {},
+            loans: [],
+            expenses: [],
+            queries: []
+        };
+
+        let localCached = JSON.parse(localStorage.getItem(STORAGE_KEY));
+        let appData = {
+            ...defaultSharedData,
+            ...(localCached || {}),
+            currentUser: sessionState.currentUser,
+            activeTab: sessionState.activeTab
+        };
+
+        function normalizeAppData() {
+            if (!appData.adminCreds) appData.adminCreds = defaultSharedData.adminCreds;
+            if (!appData.paymentSettings) appData.paymentSettings = defaultSharedData.paymentSettings;
+            if (!appData.whatsappTemplates) appData.whatsappTemplates = defaultSharedData.whatsappTemplates;
+            if (!appData.currentMonth) appData.currentMonth = "2026-11";
+            if (!Array.isArray(appData.members)) appData.members = defaultSharedData.members;
+            if (!appData.savings || typeof appData.savings !== 'object') appData.savings = {};
+            if (!Array.isArray(appData.loans)) appData.loans = [];
+            if (!Array.isArray(appData.expenses)) appData.expenses = [];
+            if (!Array.isArray(appData.queries)) appData.queries = [];
+
+            appData.loans.forEach(l => {
+                if (!Array.isArray(l.repayments)) l.repayments = [];
+            });
+
+            appData.members.forEach(m => {
+                if (!m.age) m.age = 30;
+                if (!m.photo) m.photo = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150";
+                if (!m.joinMonth) m.joinMonth = "2026-01";
+            });
+        }
+
+        normalizeAppData();
+
+        function getSharedPayload() {
+            return {
+                adminCreds: appData.adminCreds,
+                paymentSettings: appData.paymentSettings,
+                whatsappTemplates: appData.whatsappTemplates,
+                currentMonth: appData.currentMonth,
+                members: appData.members,
+                savings: appData.savings,
+                loans: appData.loans,
+                expenses: appData.expenses,
+                queries: appData.queries
+            };
+        }
+
+        window.applyCloudData = function(cloudData) {
+            appData = {
+                ...defaultSharedData,
+                ...cloudData,
+                currentUser: sessionState.currentUser,
+                activeTab: sessionState.activeTab
+            };
+            normalizeAppData();
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(getSharedPayload()));
+            render();
+        };
+
+        window.pushInitialDataToCloud = function() {
+            normalizeAppData();
+            if (window.dbSync) {
+                window.dbSync.saveSharedData(getSharedPayload());
+            }
+        };
+
+        let myChartInstance = null;
+
+        function saveSessionOnly() {
+            sessionState.currentUser = appData.currentUser;
+            sessionState.activeTab = appData.activeTab;
+            sessionStorage.setItem(SESSION_KEY, JSON.stringify(sessionState));
+            render();
+        }
+
+        function saveAppData() {
+            normalizeAppData();
+            const payload = getSharedPayload();
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+            if (window.dbSync) {
+                window.dbSync.saveSharedData(payload);
+            }
+            render();
+        }
+
+        function render() {
+            const root = document.getElementById("app");
+            if (!appData.currentUser) {
+                root.innerHTML = renderLoginScreen();
+            } else {
+                root.innerHTML = renderMainApp();
+                if(appData.activeTab === 'dashboard') {
+                    initDashboardCharts();
+                }
+            }
+            lucide.createIcons();
+        }
+
+        function renderLoginScreen() {
+            return `
+                <div class="min-h-[85vh] flex items-center justify-center animate-fade-in">
+                    <div class="bg-slate-900/95 backdrop-blur-2xl border border-slate-800 p-8 rounded-3xl shadow-2xl w-full max-w-md text-center">
+                        <div class="inline-flex p-4 bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 rounded-2xl mb-4 shadow-inner animate-pulse">
+                            <i data-lucide="shield-check" class="w-12 h-12"></i>
+                        </div>
+                        <h1 class="text-2xl font-bold text-emerald-300 tracking-wide">અમારી બચત <span class="text-amber-400">|</span> અમારી સુરક્ષા</h1>
+                        <p class="text-slate-400 text-xs font-semibold uppercase tracking-widest mt-1 mb-6">Savings & Loan Management Portal</p>
+
+                        <div class="space-y-6 text-left">
+                            <div class="bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50">
+                                <h3 class="font-semibold text-indigo-300 mb-3 flex items-center gap-2"><i data-lucide="user-cog" class="w-5 h-5"></i> Admin Login</h3>
+                                <div class="space-y-3">
+                                    <input type="text" id="adminUser" placeholder="Username" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500">
+                                    <input type="password" id="adminPass" placeholder="Password" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500">
+                                    <button onclick="handleAdminLogin()" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 rounded-xl transition shadow-lg shadow-indigo-600/30">Login as Admin</button>
+                                </div>
+                            </div>
+
+                            <div class="relative flex py-1 items-center">
+                                <div class="flex-grow border-t border-slate-700"></div>
+                                <span class="flex-shrink mx-4 text-slate-500 text-xs uppercase">Ya Member View</span>
+                                <div class="flex-grow border-t border-slate-700"></div>
+                            </div>
+
+                            <div class="bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50">
+                                <h3 class="font-semibold text-emerald-300 mb-3 flex items-center gap-2"><i data-lucide="users" class="w-5 h-5"></i> Member Login</h3>
+                                <div class="space-y-3">
+                                    <select id="selectedMember" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500">
+                                        <option value="">Apna Naam Chunein...</option>
+                                        ${appData.members.map(m => `<option value="${m.name}">${m.name}</option>`).join('')}
+                                    </select>
+                                    <button onclick="handleMemberLogin()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 rounded-xl transition shadow-lg shadow-emerald-600/30">View Member Dashboard</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function handleAdminLogin() {
+            const u = document.getElementById('adminUser').value;
+            const p = document.getElementById('adminPass').value;
+            if(u === appData.adminCreds.username && p === appData.adminCreds.password) {
+                appData.currentUser = { role: 'admin' };
+                appData.activeTab = 'dashboard';
+                saveSessionOnly();
+            } else {
+                alert('Galat Username ya Password!');
+            }
+        }
+
+        function handleMemberLogin() {
+            const name = document.getElementById('selectedMember').value;
+            if(!name) { alert('Kripya apna naam select karein.'); return; }
+            appData.currentUser = { role: 'member', name: name };
+            appData.activeTab = 'dashboard';
+            saveSessionOnly();
+        }
+
+        function logout() {
+            appData.currentUser = null;
+            saveSessionOnly();
+        }
+
+        function renderMainApp() {
+            const isAdmin = appData.currentUser.role === 'admin';
+            return `
+                <header class="bg-slate-900/80 backdrop-blur-xl border border-slate-800 rounded-2xl p-4 mb-6 flex flex-wrap justify-between items-center gap-4 shadow-xl">
+                    <div class="flex items-center gap-3 bg-slate-800/80 px-4 py-2 rounded-2xl border border-emerald-500/30 shadow-inner">
+                        <div class="p-2 bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 rounded-xl">
+                            <i data-lucide="shield-check" class="w-6 h-6"></i>
+                        </div>
+                        <div>
+                            <h1 class="text-sm md:text-base font-bold text-emerald-300 tracking-wider">અમારી બચત <span class="text-amber-400">|</span> અમારી સુરક્ષા</h1>
+                            <p class="text-[11px] text-slate-400">${isAdmin ? '👑 Admin: ' + appData.adminCreds.displayName : '👤 Member: ' + appData.currentUser.name}</p>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-wrap gap-2 items-center">
+                        <button onclick="setTab('dashboard')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'dashboard' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Dashboard</button>
+                        <button onclick="setTab('members')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'members' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">${isAdmin ? 'Members' : 'My Profile'}</button>
+                        <button onclick="setTab('deadline')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'deadline' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">🔔 1-10 Rule</button>
+                        <button onclick="openUpiQrModal()" class="px-3.5 py-2 rounded-xl text-xs font-medium bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600 hover:text-white transition flex items-center gap-1.5"><i data-lucide="qr-code" class="w-4 h-4"></i> UPI QR</button>
+                        <button onclick="setTab('loans')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'loans' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Loans</button>
+                        <button onclick="setTab('expenses')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'expenses' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Penalties</button>
+                        <button onclick="setTab('audit')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'audit' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Audit</button>
+                        <button onclick="setTab('queries')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'queries' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Chat</button>
+                        ${isAdmin ? `<button onclick="openSettingsModal()" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition" title="Admin Settings"><i data-lucide="settings" class="w-5 h-5"></i></button>` : ''}
+                        <button onclick="logout()" class="px-3 py-2 bg-rose-600/20 text-rose-400 hover:bg-rose-600 hover:text-white rounded-xl text-xs font-medium transition" title="Logout"><i data-lucide="log-out" class="w-4 h-4"></i></button>
+                    </div>
+                </header>
+
+                <main class="animate-fade-in">
+                    ${appData.activeTab === 'dashboard' ? renderDashboard() : ''}
+                    ${appData.activeTab === 'members' ? renderMembersTab() : ''}
+                    ${appData.activeTab === 'deadline' ? renderDeadlineTab() : ''}
+                    ${appData.activeTab === 'loans' ? renderLoansTab() : ''}
+                    ${appData.activeTab === 'expenses' ? renderExpensesTab() : ''}
+                    ${appData.activeTab === 'audit' ? renderAuditTab() : ''}
+                    ${appData.activeTab === 'queries' ? renderQueriesTab() : ''}
+                </main>
+
+                <!-- UPI & QR Code Modal -->
+                <div id="upiQrModal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
+                    <div class="bg-slate-900 border border-slate-800 p-6 rounded-3xl w-full max-w-sm space-y-4 text-center shadow-2xl animate-scale-in">
+                        <div class="flex justify-between items-center">
+                            <h3 class="text-base font-bold text-emerald-300 flex items-center gap-2"><i data-lucide="qr-code" class="w-5 h-5 text-emerald-400"></i> અમારી બચત | અમારી સુરક્ષા</h3>
+                            <button onclick="closeUpiQrModal()" class="text-slate-400 hover:text-white text-lg">✕</button>
+                        </div>
+                        <div class="bg-white p-3 rounded-2xl inline-block shadow-inner">
+                            <img src="${appData.paymentSettings.qrImageUrl}" alt="Payment QR Code" class="w-48 h-48 mx-auto object-contain">
+                        </div>
+                        <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-700/50">
+                            <p class="text-xs text-slate-400 mb-1">Official UPI ID:</p>
+                            <p class="text-sm font-bold text-emerald-400 font-mono select-all">${appData.paymentSettings.upiId}</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Admin Settings Modal -->
+                <div id="settingsModal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in overflow-y-auto">
+                    <div class="bg-slate-900 border border-slate-800 p-6 rounded-3xl w-full max-w-lg space-y-4 shadow-2xl animate-scale-in my-8">
+                        <div class="flex items-center gap-2 text-white">
+                            <i data-lucide="settings" class="w-5 h-5 text-indigo-400"></i>
+                            <h3 class="text-lg font-bold">Admin Account & App Settings</h3>
+                        </div>
+                        <div class="space-y-3">
+                            <div>
+                                <label class="text-xs text-slate-300 mb-1 block">Admin Name</label>
+                                <input type="text" id="newAdminName" value="${appData.adminCreds.displayName}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
+                            </div>
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="text-xs text-slate-300 mb-1 block">Username</label>
+                                    <input type="text" id="newAdminUser" value="${appData.adminCreds.username}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
+                                </div>
+                                <div>
+                                    <label class="text-xs text-slate-300 mb-1 block">Password</label>
+                                    <input type="password" id="newAdminPass" value="${appData.adminCreds.password}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
+                                </div>
+                            </div>
+                            <div>
+                                <label class="text-xs text-slate-300 mb-1 block">UPI ID</label>
+                                <input type="text" id="newUpiId" value="${appData.paymentSettings.upiId}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
+                            </div>
+
+                            <div class="border-t border-slate-800 pt-3 mt-3">
+                                <h4 class="text-xs font-bold text-indigo-300 mb-2">📥 Restore Data from Backup File (.json)</h4>
+                                <input type="file" id="importFile" accept=".json" class="w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-slate-700 file:text-white hover:file:bg-slate-600 cursor-pointer mb-2">
+                                <button onclick="importBackupJSON()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2 rounded-xl text-xs font-medium transition shadow-lg">Upload & Restore Data to Cloud</button>
+                            </div>
+                        </div>
+                        <div class="flex justify-end gap-3 pt-2">
+                            <button onclick="closeSettingsModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-sm">Cancel</button>
+                            <button onclick="saveAdminSettings()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm font-medium">Save Settings</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Advance Payment Modal -->
+                <div id="advanceModal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
+                    <div class="bg-slate-900 border border-slate-800 p-6 rounded-3xl w-full max-w-md space-y-4 shadow-2xl animate-scale-in">
+                        <h3 class="text-lg font-bold text-white">Record Advance Savings</h3>
+                        <input type="hidden" id="advMemberId">
+                        <p id="advMemberNameDisplay" class="text-xs text-indigo-300 font-semibold"></p>
+                        <div>
+                            <label class="text-xs text-slate-300 mb-1 block">Kitne mahine ka advance dena hai?</label>
+                            <input type="number" id="advMonthsCount" value="1" min="1" max="12" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
+                        </div>
+                        <div class="flex justify-end gap-3 pt-2">
+                            <button onclick="closeAdvanceModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-sm">Cancel</button>
+                            <button onclick="saveAdvancePayment()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm">Save Advance</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function setTab(tab) { appData.activeTab = tab; saveSessionOnly(); }
+        function openUpiQrModal() { document.getElementById('upiQrModal').classList.remove('hidden'); }
+        function closeUpiQrModal() { document.getElementById('upiQrModal').classList.add('hidden'); }
+        function openSettingsModal() { document.getElementById('settingsModal').classList.remove('hidden'); }
+        function closeSettingsModal() { document.getElementById('settingsModal').classList.add('hidden'); }
+
+        function saveAdminSettings() {
+            let newName = document.getElementById('newAdminName').value.trim();
+            let newU = document.getElementById('newAdminUser').value.trim();
+            let newP = document.getElementById('newAdminPass').value.trim();
+            let newUpi = document.getElementById('newUpiId').value.trim();
+
+            if(!newU || !newP || !newName) { alert('Sabhi fields bharein.'); return; }
+            appData.adminCreds.displayName = newName;
+            appData.adminCreds.username = newU;
+            appData.adminCreds.password = newP;
+            if(newUpi) appData.paymentSettings.upiId = newUpi;
+
+            alert('Settings updated & synced to cloud!');
+            closeSettingsModal();
+            saveAppData();
+        }
+
+        function exportBackupJSON() {
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(getSharedPayload(), null, 2));
+            const dlAnchor = document.createElement('a');
+            dlAnchor.setAttribute("href", dataStr);
+            dlAnchor.setAttribute("download", `Amari_Bachat_Suraksha_Backup_${new Date().toISOString().split('T')[0]}.json`);
+            document.body.appendChild(dlAnchor);
+            dlAnchor.click();
+            dlAnchor.remove();
+        }
+
+        function importBackupJSON() {
+            const fileInput = document.getElementById('importFile');
+            if (!fileInput.files || fileInput.files.length === 0) {
+                alert('Kripya pehle ek JSON backup file select karein!');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+
+            reader.onload = function(event) {
+                try {
+                    const importedData = JSON.parse(event.target.result);
+                    if (importedData && importedData.members) {
+                        if (confirm('Kya aap sach mein yeh data restore karna chahte hain? Sabhi devices par yeh naya data update ho jayega.')) {
+                            appData = {
+                                ...defaultSharedData,
+                                ...importedData,
+                                currentUser: sessionState.currentUser,
+                                activeTab: sessionState.activeTab
+                            };
+                            closeSettingsModal();
+                            saveAppData();
+                            alert('Data successfully cloud par restore ho gaya hai!');
+                        }
+                    } else {
+                        alert('Yeh file valid "અમારી બચત" backup file nahi hai!');
+                    }
+                } catch (error) {
+                    alert('JSON file read karne mein error aayi hai: ' + error.message);
+                }
+            };
+
+            reader.readAsText(file);
+        }
+
+        function exportExcelAudit() {
+            let data = appData.members.map((m, idx) => {
+                let mMonths = 0;
+                Object.keys(appData.savings).forEach(k => {
+                    if (k.endsWith(`_${m.id}`)) {
+                        let val = appData.savings[k];
+                        if (val === true) mMonths++;
+                        else if (typeof val === 'object' && val.paid) {
+                            mMonths += (1 + (val.advanceMonths || 0));
+                        }
+                    }
+                });
+                let mSavings = mMonths * 500;
+                let mInterestPaid = 0;
+                appData.loans.filter(l => l.memberName === m.name).forEach(l => {
+                    (l.repayments || []).forEach(r => { if(r.type === 'Interest') mInterestPaid += r.amount; });
+                });
+                return {
+                    "#": idx + 1,
+                    "Member Name": m.name,
+                    "Age": m.age,
+                    "Mobile Phone": m.phone,
+                    "Join Month": m.joinMonth || "2026-01",
+                    "Total Personal Savings (Rs)": mSavings,
+                    "Interest Paid (Rs)": mInterestPaid
+                };
+            });
+
+            const ws = XLSX.utils.json_to_sheet(data);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Annual Audit Summary");
+            XLSX.writeFile(wb, `Amari_Bachat_Suraksha_Audit_${new Date().toISOString().split('T')[0]}.xlsx`);
+        }
+
+        function checkMemberPaidStatus(memberId, targetMonth) {
+            let directKey = `${targetMonth}_${memberId}`;
+            if (appData.savings[directKey] === true || (typeof appData.savings[directKey] === 'object' && appData.savings[directKey].paid)) {
+                return { status: true, type: 'Paid' };
+            }
+
+            let [tYear, tMonth] = targetMonth.split('-').map(Number);
+            for (let m = 1; m <= 12; m++) {
+                let checkDate = new Date(tYear, tMonth - 1 - m, 1);
+                let yStr = checkDate.getFullYear();
+                let mStr = String(checkDate.getMonth() + 1).padStart(2, '0');
+                let pastMonthKey = `${yStr}-${mStr}_${memberId}`;
+                
+                let val = appData.savings[pastMonthKey];
+                if (val && typeof val === 'object' && val.advanceMonths) {
+                    let advCount = val.advanceMonths;
+                    let diffMonths = (tYear - yStr) * 12 + (tMonth - parseInt(mStr));
+                    if (diffMonths > 0 && diffMonths <= advCount) {
+                        return { status: true, type: 'Advance Adjusted' };
+                    }
+                }
+            }
+            return { status: false, type: 'Pending' };
+        }
+
+        function autoApplyLatePenalties() {
+            let count = 0;
+            appData.members.forEach(m => {
+                let res = checkMemberPaidStatus(m.id, appData.currentMonth);
+                if(!res.status) {
+                    let penaltyTitle = `Late Savings Penalty - ${m.name} (${appData.currentMonth})`;
+                    let alreadyExists = appData.expenses.some(e => e.title === penaltyTitle);
+                    if(!alreadyExists) {
+                        appData.expenses.push({
+                            id: Date.now() + Math.floor(Math.random() * 1000),
+                            title: penaltyTitle,
+                            amount: 50,
+                            type: 'Income',
+                            date: new Date().toISOString().split('T')[0]
+                        });
+                        count++;
+                    }
+                }
+            });
+            alert(`${count} pending members par ₹50 late penalty apply kar di gayi hai!`);
+            saveAppData();
+        }
+
+        function formatCustomWhatsAppMessage(memberName) {
+            let tpl = appData.whatsappTemplates.reminderMsg;
+            return tpl.replace(/{name}/g, memberName)
+                      .replace(/{month}/g, appData.currentMonth)
+                      .replace(/{amount}/g, "500")
+                      .replace(/{upi}/g, appData.paymentSettings.upiId);
+        }
+
+        function renderDeadlineTab() {
+            let today = new Date();
+            let dateNum = today.getDate();
+            let statusBadge = "";
+            if(dateNum <= 4) statusBadge = `<span class="px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-xs font-semibold">Phase 1: Payment Open (1-4)</span>`;
+            else if(dateNum >= 5 && dateNum <= 10) statusBadge = `<span class="px-3 py-1 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-full text-xs font-semibold">Phase 2: Auto Notification (5-10)</span>`;
+            else statusBadge = `<span class="px-3 py-1 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded-full text-xs font-semibold">Phase 3: Late Penalty Active (>10th)</span>`;
+
+            const isAdmin = appData.currentUser.role === 'admin';
+            const memberName = isAdmin ? null : appData.currentUser.name;
+
+            return `
+                <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-6 shadow-xl">
+                    <div class="flex flex-wrap justify-between items-center gap-4">
+                        <div>
+                            <h2 class="text-xl font-bold text-white">અમારી બચત | અમારી સુરક્ષા - 1-10 Rule & Bulk Messaging</h2>
+                            <p class="text-xs text-slate-400">Sabhi members ko ek sath ya manually WhatsApp message bhejein.</p>
+                        </div>
+                        <div>${statusBadge}</div>
+                    </div>
+
+                    ${isAdmin ? `
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div class="bg-slate-800/40 border border-slate-700/50 p-5 rounded-2xl space-y-2">
+                                <div class="text-indigo-400 font-bold text-sm">Step 1: Bulk Reminders</div>
+                                <p class="text-xs text-slate-300">Sabhi pending members ko ek click me reminder bhejein.</p>
+                                <button onclick="sendBulkWhatsAppReminders()" class="mt-2 w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2 rounded-xl text-xs font-medium transition shadow-lg">📲 Send All Selected Reminders</button>
+                            </div>
+                            <div class="bg-slate-800/40 border border-slate-700/50 p-5 rounded-2xl space-y-2">
+                                <div class="text-amber-400 font-bold text-sm">Step 2: Custom Broadcast</div>
+                                <p class="text-xs text-slate-300">Apna khud ka custom message sabhi ko bhejein.</p>
+                                <input type="text" id="customBroadcastText" placeholder="Custom message..." class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none mb-1">
+                                <button onclick="sendCustomBroadcast()" class="w-full bg-amber-600 hover:bg-amber-500 text-white py-1.5 rounded-xl text-xs font-medium transition">📢 Broadcast to Selected</button>
+                            </div>
+                            <div class="bg-slate-800/40 border border-slate-700/50 p-5 rounded-2xl space-y-2">
+                                <div class="text-rose-400 font-bold text-sm">Step 3: Penalty Management</div>
+                                <p class="text-xs text-slate-300">10 taarik ke baad ₹50 fine automatic apply karein.</p>
+                                <button onclick="autoApplyLatePenalties()" class="mt-2 w-full bg-rose-600 hover:bg-rose-500 text-white py-2 rounded-xl text-xs font-medium transition shadow-lg">⚡ Apply ₹50 Penalty Now</button>
+                            </div>
+                        </div>
+                    ` : ''}
+
+                    <div>
+                        <div class="flex justify-between items-center mb-3">
+                            <h3 class="text-md font-bold text-white">${isAdmin ? `Members List & Selection for Messaging (${appData.currentMonth})` : `Aapki Payment Status (${appData.currentMonth})`}</h3>
+                            ${isAdmin ? `
+                                <div class="flex gap-2">
+                                    <button onclick="toggleSelectAll(true)" class="px-3 py-1 bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs hover:bg-indigo-600 hover:text-white transition">Select All</button>
+                                    <button onclick="toggleSelectAll(false)" class="px-3 py-1 bg-slate-800 text-slate-300 rounded-lg text-xs hover:bg-slate-700 transition">Deselect All</button>
+                                </div>
+                            ` : ''}
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="border-b border-slate-800 text-slate-400 text-xs uppercase">
+                                        ${isAdmin ? `<th class="p-3 w-10">Select</th>` : ''}
+                                        <th class="p-3">Member Name</th>
+                                        <th class="p-3">Phone</th>
+                                        <th class="p-3">Status</th>
+                                        ${isAdmin ? `<th class="p-3 text-right">Action</th>` : ''}
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-800 text-sm">
+                                    ${appData.members.filter(m => isAdmin || m.name === memberName).map(m => {
+                                        let res = checkMemberPaidStatus(m.id, appData.currentMonth);
+                                        let statusBadgeHtml = res.status ? `<span class="px-2.5 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-xs font-semibold">PAID</span>` : `<span class="px-2.5 py-1 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded-full text-xs font-semibold">PENDING</span>`;
+                                        let customMsg = formatCustomWhatsAppMessage(m.name);
+                                        let waLink = `https://wa.me/91${m.phone}?text=${encodeURIComponent(customMsg)}`;
+
+                                        return `
+                                            <tr class="hover:bg-slate-800/40 transition">
+                                                ${isAdmin ? `<td class="p-3"><input type="checkbox" data-member-id="${m.id}" class="member-checkbox w-4 h-4 rounded bg-slate-900 border-slate-700 text-emerald-600 focus:ring-0 cursor-pointer" checked></td>` : ''}
+                                                <td class="p-3 font-semibold text-white flex items-center gap-2">
+                                                    <img src="${m.photo}" class="w-8 h-8 rounded-full object-cover border border-slate-700">
+                                                    ${m.name}
+                                                </td>
+                                                <td class="p-3 text-slate-300">${m.phone}</td>
+                                                <td class="p-3">${statusBadgeHtml}</td>
+                                                ${isAdmin ? `
+                                                    <td class="p-3 text-right space-x-2">
+                                                        <a href="${waLink}" target="_blank" class="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600 hover:text-white rounded-lg text-xs font-medium transition">WhatsApp</a>
+                                                        <button onclick="toggleSavings(${m.id})" class="px-3 py-1.5 bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600 hover:text-white rounded-lg text-xs font-medium transition">Mark Paid</button>
+                                                    </td>
+                                                ` : ''}
+                                            </tr>
+                                        `;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function toggleSelectAll(status) {
+            document.querySelectorAll('.member-checkbox').forEach(cb => cb.checked = status);
+        }
+
+        function sendBulkWhatsAppReminders() {
+            let selectedCheckboxes = document.querySelectorAll('.member-checkbox:checked');
+            if(selectedCheckboxes.length === 0) { alert('Kripya kam se kam ek member select karein!'); return; }
+
+            let count = 0;
+            selectedCheckboxes.forEach(cb => {
+                let mId = parseInt(cb.getAttribute('data-member-id'));
+                let m = appData.members.find(x => x.id === mId);
+                if(m) {
+                    let msg = formatCustomWhatsAppMessage(m.name);
+                    window.open(`https://wa.me/91${m.phone}?text=${encodeURIComponent(msg)}`, '_blank');
+                    count++;
+                }
+            });
+            alert(`${count} selected members ke WhatsApp reminder links open kar diye gaye hain!`);
+        }
+
+        function sendCustomBroadcast() {
+            let customText = document.getElementById('customBroadcastText').value.trim();
+            if(!customText) { alert('Pehle custom message type karein!'); return; }
+
+            let selectedCheckboxes = document.querySelectorAll('.member-checkbox:checked');
+            if(selectedCheckboxes.length === 0) { alert('Kripya kam se kam ek member select karein!'); return; }
+
+            let count = 0;
+            selectedCheckboxes.forEach(cb => {
+                let mId = parseInt(cb.getAttribute('data-member-id'));
+                let m = appData.members.find(x => x.id === mId);
+                if(m) {
+                    let finalMsg = `Hello ${m.name},\n${customText}\n- 'અમારી બચત | અમારી સુરક્ષા' Admin`;
+                    window.open(`https://wa.me/91${m.phone}?text=${encodeURIComponent(finalMsg)}`, '_blank');
+                    count++;
+                }
+            });
+            alert(`${count} selected members ko custom broadcast message bhej diya gaya hai!`);
+        }
+
+        function renderDashboard() {
+            const isAdmin = appData.currentUser.role === 'admin';
+            const memberName = isAdmin ? null : appData.currentUser.name;
+            const memberObj = isAdmin ? null : appData.members.find(m => m.name === memberName);
+
+            if(!isAdmin && memberObj) {
+                let memberTotalPaidMonths = 0;
+                Object.keys(appData.savings).forEach(k => {
+                    if (k.endsWith(`_${memberObj.id}`)) {
+                        let val = appData.savings[k];
+                        if (val === true) memberTotalPaidMonths++;
+                        else if (typeof val === 'object' && val.paid) {
+                            memberTotalPaidMonths += (1 + (val.advanceMonths || 0));
+                        }
+                    }
+                });
+                let totalMemberSavings = memberTotalPaidMonths * 500;
+                let memberLoans = appData.loans.filter(l => l.memberName === memberName);
+                let memberActiveLoan = memberLoans.reduce((acc, l) => {
+                    let repaid = (l.repayments || []).reduce((s, r) => r.type === 'Principal' ? s + r.amount : s, 0);
+                    return acc + (l.amount - repaid);
+                }, 0);
+                let memberPenalties = appData.expenses.filter(e => e.title.includes(memberName) && e.type === 'Income').reduce((s, e) => s + e.amount, 0);
+                let currentMonthStatus = checkMemberPaidStatus(memberObj.id, appData.currentMonth);
+
+                return `
+                    <div class="space-y-6">
+                        <div class="bg-slate-900/60 border border-slate-800 p-6 rounded-2xl shadow-xl flex items-center gap-4">
+                            <img src="${memberObj.photo}" class="w-16 h-16 rounded-full object-cover border-2 border-emerald-500">
+                            <div>
+                                <h2 class="text-xl font-bold text-white">Namaste, ${memberObj.name}!</h2>
+                                <p class="text-xs text-emerald-400 font-medium">Aapka Personal Saving & Loan Dashboard ('અમારી બચત | અમારી સુરક્ષા')</p>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                            <div class="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-xl">
+                                <p class="text-xs text-slate-400 font-medium">Aapki Total Savings</p>
+                                <h3 class="text-2xl font-bold text-emerald-400 mt-1">₹${totalMemberSavings}</h3>
+                            </div>
+                            <div class="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-xl">
+                                <p class="text-xs text-slate-400 font-medium">Aapka Active Loan Due</p>
+                                <h3 class="text-2xl font-bold text-amber-400 mt-1">₹${memberActiveLoan}</h3>
+                            </div>
+                            <div class="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-xl">
+                                <p class="text-xs text-slate-400 font-medium">Aapki Penalties (Jurmana)</p>
+                                <h3 class="text-2xl font-bold text-rose-400 mt-1">₹${memberPenalties}</h3>
+                            </div>
+                        </div>
+
+                        <div class="bg-slate-900/60 border border-slate-800 p-6 rounded-2xl shadow-xl space-y-4">
+                            <h3 class="text-md font-bold text-white">Current Month Status (${appData.currentMonth})</h3>
+                            <div class="flex items-center justify-between bg-slate-800/40 p-4 rounded-xl border border-slate-700/50">
+                                <div>
+                                    <p class="text-sm font-semibold text-white">Mahine ki Savings (₹500)</p>
+                                    <p class="text-xs text-slate-400">1 se 10 taarik ke beech jama karna anivarya hai.</p>
+                                </div>
+                                <div>
+                                    <span class="px-3 py-1.5 rounded-full text-xs font-semibold ${currentMonthStatus.status ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}">
+                                        ${currentMonthStatus.status ? 'PAID ✅' : 'PENDING ⚠️'}
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="flex gap-3">
+                                <button onclick="openUpiQrModal()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-xl text-xs font-medium transition shadow-lg flex items-center gap-2">
+                                    <i data-lucide="qr-code" class="w-4 h-4"></i> Scan UPI QR to Pay
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            let totalSavingsCount = 0;
+            Object.keys(appData.savings).forEach(k => {
+                let val = appData.savings[k];
+                if (val === true) totalSavingsCount++;
+                else if (typeof val === 'object' && val.paid) {
+                    totalSavingsCount += (1 + (val.advanceMonths || 0));
+                }
+            });
+            let totalSavings = totalSavingsCount * 500;
+
+            let totalInterest = 0;
+            appData.loans.forEach(l => { (l.repayments || []).forEach(r => { if(r.type === 'Interest') totalInterest += r.amount; }); });
+            let activeLoansTotal = appData.loans.filter(l => l.status === 'Active').reduce((acc, l) => {
+                let repaidPrincipal = (l.repayments || []).reduce((sum, r) => r.type === 'Principal' ? sum + r.amount : sum, 0);
+                return acc + (l.amount - repaidPrincipal);
+            }, 0);
+            let totalPenaltiesNet = appData.expenses.reduce((acc, e) => e.type === 'Income' ? acc + e.amount : acc - e.amount, 0);
+            let netTotalFund = totalSavings + totalInterest + totalPenaltiesNet;
+            let availableCash = netTotalFund - activeLoansTotal;
+
+            return `
+                <div class="space-y-6">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+                        <div class="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-xl">
+                            <p class="text-xs text-slate-400 font-medium">Total Savings</p>
+                            <h3 class="text-xl font-bold text-emerald-400 mt-1">₹${totalSavings}</h3>
+                        </div>
+                        <div class="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-xl">
+                            <p class="text-xs text-slate-400 font-medium">Interest Earned</p>
+                            <h3 class="text-xl font-bold text-cyan-400 mt-1">₹${totalInterest}</h3>
+                        </div>
+                        <div class="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-xl">
+                            <p class="text-xs text-slate-400 font-medium">Active Loans Out</p>
+                            <h3 class="text-xl font-bold text-amber-400 mt-1">₹${activeLoansTotal}</h3>
+                        </div>
+                        <div class="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-xl">
+                            <p class="text-xs text-slate-400 font-medium">Available Cash</p>
+                            <h3 class="text-xl font-bold text-green-400 mt-1">₹${availableCash}</h3>
+                        </div>
+                        <div class="bg-slate-900/60 border border-slate-800 p-5 rounded-2xl shadow-xl">
+                            <p class="text-xs text-slate-400 font-medium">Net Total Fund</p>
+                            <h3 class="text-xl font-bold text-indigo-400 mt-1">₹${netTotalFund}</h3>
+                        </div>
+                    </div>
+
+                    <div class="bg-slate-900/60 border border-slate-800 p-6 rounded-2xl shadow-xl grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div>
+                            <h4 class="text-sm font-bold text-white mb-3">અમારી બચત | અમારી સુરક્ષા - Financial Breakdown</h4>
+                            <div class="w-full h-64 flex items-center justify-center">
+                                <canvas id="financialDonutChart"></canvas>
+                            </div>
+                        </div>
+                        <div class="flex flex-col justify-center space-y-3">
+                            <h4 class="text-sm font-bold text-indigo-300">Quick Actions</h4>
+                            <button onclick="openUpiQrModal()" class="flex items-center gap-2 bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-600 hover:text-white px-4 py-2.5 rounded-xl text-xs font-medium transition">
+                                <i data-lucide="qr-code" class="w-4 h-4"></i> View / Scan Group UPI QR Code
+                            </button>
+                            <button onclick="autoApplyLatePenalties()" class="flex items-center gap-2 bg-rose-600/20 text-rose-300 border border-rose-500/30 hover:bg-rose-600 hover:text-white px-4 py-2.5 rounded-xl text-xs font-medium transition">
+                                <i data-lucide="alert-circle" class="w-4 h-4"></i> Auto-Apply ₹50 Late Penalty for Unpaid Dues
+                            </button>
+                            <button onclick="exportExcelAudit()" class="flex items-center gap-2 bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-600 hover:text-white px-4 py-2.5 rounded-xl text-xs font-medium transition">
+                                <i data-lucide="file-spreadsheet" class="w-4 h-4"></i> Export Annual Audit to Excel (.xlsx)
+                            </button>
+                            <button onclick="exportBackupJSON()" class="flex items-center gap-2 bg-blue-600/20 text-blue-300 border border-blue-500/30 hover:bg-blue-600 hover:text-white px-4 py-2.5 rounded-xl text-xs font-medium transition">
+                                <i data-lucide="download" class="w-4 h-4"></i> Export JSON Data Backup
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function initDashboardCharts() {
+            setTimeout(() => {
+                const ctx = document.getElementById('financialDonutChart');
+                if(!ctx) return;
+                
+                let totalSavingsCount = 0;
+                Object.keys(appData.savings).forEach(k => {
+                    let val = appData.savings[k];
+                    if (val === true) totalSavingsCount++;
+                    else if (typeof val === 'object' && val.paid) {
+                        totalSavingsCount += (1 + (val.advanceMonths || 0));
+                    }
+                });
+                let totalSavings = totalSavingsCount * 500;
+                let totalInterest = 0;
+                appData.loans.forEach(l => { (l.repayments || []).forEach(r => { if(r.type === 'Interest') totalInterest += r.amount; }); });
+                let totalPenaltiesNet = appData.expenses.reduce((acc, e) => e.type === 'Income' ? acc + e.amount : acc - e.amount, 0);
+
+                if(myChartInstance) myChartInstance.destroy();
+                myChartInstance = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Total Savings', 'Interest Income', 'Net Penalties/Extra'],
+                        datasets: [{
+                            data: [totalSavings, totalInterest, totalPenaltiesNet],
+                            backgroundColor: ['#10b981', '#06b6d4', '#6366f1'],
+                            borderWidth: 0
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { labels: { color: '#94a3b8', font: { family: 'Poppins', size: 11 } } }
+                        }
+                    }
+                });
+            }, 100);
+        }
+
+        function renderMembersTab() {
+            const isAdmin = appData.currentUser.role === 'admin';
+            const memberName = isAdmin ? null : appData.currentUser.name;
+            const membersList = isAdmin ? appData.members : appData.members.filter(m => m.name === memberName);
+
+            return `
+                <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-6 shadow-xl">
+                    <div class="flex flex-wrap justify-between items-center gap-4">
+                        <div>
+                            <h2 class="text-xl font-bold text-white">${isAdmin ? 'અમારી બચત | અમારી સુરક્ષા - Members Directory' : 'અમારી બચત | અમારી સુરક્ષા - My Profile & Savings'}</h2>
+                            <p class="text-xs text-slate-400">${isAdmin ? 'Members ki photo, umar, aur savings status yahan manage karein.' : 'Aapki personal savings aur profile details.'}</p>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <label class="text-sm text-slate-300">Month:</label>
+                            <input type="month" id="monthSelector" value="${appData.currentMonth}" onchange="changeMonth(this.value)" class="bg-slate-800 border border-slate-700 text-white rounded-xl px-3 py-1.5 text-sm focus:outline-none">
+                            ${isAdmin ? `<button onclick="openMemberModal()" class="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition"><i data-lucide="user-plus" class="w-4 h-4"></i> Add Member</button>` : ''}
+                        </div>
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="border-b border-slate-800 text-slate-400 text-xs uppercase">
+                                    <th class="p-3">Photo & Name</th>
+                                    <th class="p-3">Age</th>
+                                    <th class="p-3">Phone</th>
+                                    <th class="p-3">Join Month</th>
+                                    <th class="p-3">${appData.currentMonth} Status</th>
+                                    <th class="p-3">Total Savings</th>
+                                    <th class="p-3 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-800 text-sm">
+                                ${membersList.map((m) => {
+                                    let res = checkMemberPaidStatus(m.id, appData.currentMonth);
+                                    let isPaid = res.status;
+                                    let statusText = res.type === 'Advance Adjusted' ? 'PAID (Advance)' : (isPaid ? 'PAID (₹500)' : 'PENDING');
+
+                                    let memberTotalPaidMonths = 0;
+                                    Object.keys(appData.savings).forEach(k => {
+                                        if (k.endsWith(`_${m.id}`)) {
+                                            let val = appData.savings[k];
+                                            if (val === true) memberTotalPaidMonths++;
+                                            else if (typeof val === 'object' && val.paid) {
+                                                memberTotalPaidMonths += (1 + (val.advanceMonths || 0));
+                                            }
+                                        }
+                                    });
+                                    let totalAmount = memberTotalPaidMonths * 500;
+
+                                    return `
+                                        <tr class="hover:bg-slate-800/40 transition">
+                                            <td class="p-3 flex items-center gap-3">
+                                                <img src="${m.photo || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150'}" class="w-10 h-10 rounded-full object-cover border border-emerald-500/30">
+                                                <span class="font-semibold text-white">${m.name}</span>
+                                            </td>
+                                            <td class="p-3 text-slate-300">${m.age || 'N/A'} yrs</td>
+                                            <td class="p-3 text-slate-300">${m.phone}</td>
+                                            <td class="p-3 text-indigo-300 text-xs font-medium">${m.joinMonth || '2026-01'}</td>
+                                            <td class="p-3">
+                                                <span class="px-3 py-1 rounded-full text-xs font-semibold ${isPaid ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}">
+                                                    ${statusText}
+                                                </span>
+                                            </td>
+                                            <td class="p-3 font-medium text-emerald-400">₹${totalAmount}</td>
+                                            <td class="p-3 text-right space-x-1 sm:space-x-2">
+                                                ${isAdmin ? `
+                                                    <button onclick="toggleSavings(${m.id})" class="px-2.5 py-1.5 rounded-lg text-xs font-medium ${isPaid ? 'bg-amber-600/20 text-amber-400 hover:bg-amber-600 hover:text-white' : 'bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600 hover:text-white'} transition">
+                                                        ${isPaid ? 'Pending' : 'Paid'}
+                                                    </button>
+                                                    <button onclick="openAdvanceModal(${m.id}, '${m.name}')" class="px-2.5 py-1.5 bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600 hover:text-white rounded-lg text-xs font-medium transition" title="Pay Advance">Advance ⚡</button>
+                                                    <button onclick="openMemberModal(${m.id})" class="p-1.5 bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white rounded-lg text-xs transition" title="Edit"><i data-lucide="edit-3" class="w-4 h-4"></i></button>
+                                                    <button onclick="deleteMember(${m.id}, '${m.name}')" class="p-1.5 bg-rose-600/20 text-rose-400 hover:bg-rose-600 hover:text-white rounded-lg text-xs transition" title="Delete"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                                                ` : ''}
+                                                <button onclick="downloadMemberPassbookPDF(${m.id})" class="px-2.5 py-1.5 bg-purple-600/20 text-purple-400 hover:bg-purple-600 hover:text-white rounded-lg text-xs font-medium transition" title="Passbook"><i data-lucide="book-open" class="w-3.5 h-3.5 inline"></i> Passbook</button>
+                                            </td>
+                                        </tr>
+                                    `;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Member Add / Edit Modal -->
+                <div id="memberModal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
+                    <div class="bg-slate-900 border border-slate-800 p-6 rounded-3xl w-full max-w-md space-y-4 shadow-2xl animate-scale-in">
+                        <h3 id="memberModalTitle" class="text-lg font-bold text-white">Add New Member</h3>
+                        <input type="hidden" id="editMemberId">
+                        <div>
+                            <label class="text-xs text-slate-300 mb-1 block">Full Name</label>
+                            <input type="text" id="memberInputName" placeholder="Full Name" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
+                        </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="text-xs text-slate-300 mb-1 block">Age (Umar)</label>
+                                <input type="number" id="memberInputAge" placeholder="e.g. 28" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
+                            </div>
+                            <div>
+                                <label class="text-xs text-slate-300 mb-1 block">Mobile Number</label>
+                                <input type="text" id="memberInputPhone" placeholder="Mobile" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
+                            </div>
+                        </div>
+                        <div>
+                            <label class="text-xs text-slate-300 mb-1 block">Photo Image Link (URL)</label>
+                            <input type="text" id="memberInputPhoto" placeholder="https://image-url.com/photo.jpg" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="text-xs text-slate-300 mb-1 block">Join Month</label>
+                            <input type="month" id="memberInputJoinMonth" value="2026-01" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
+                        </div>
+                        <div class="flex justify-end gap-3 pt-2">
+                            <button onclick="closeMemberModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-sm">Cancel</button>
+                            <button onclick="saveMemberData()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm font-medium">Save Details</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function downloadMemberPassbookPDF(memberId) {
+            let m = appData.members.find(x => x.id === memberId);
+            if(!m) return;
+
+            let memberTotalPaidMonths = 0;
+            Object.keys(appData.savings).forEach(k => {
+                if (k.endsWith(`_${m.id}`)) {
+                    let val = appData.savings[k];
+                    if (val === true) memberTotalPaidMonths++;
+                    else if (typeof val === 'object' && val.paid) {
+                        memberTotalPaidMonths += (1 + (val.advanceMonths || 0));
+                    }
+                }
+            });
+            let totalSavings = memberTotalPaidMonths * 500;
+            let mLoans = appData.loans.filter(l => l.memberName === m.name);
+
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            doc.setFillColor(16, 185, 129);
+            doc.rect(0, 0, 210, 32, "F");
+            doc.setTextColor(255, 255, 255);
+            doc.setFontSize(16);
+            doc.text("Amari Bachat | Amari Suraksha - Passbook", 14, 21);
+
+            doc.setTextColor(50, 50, 50);
+            doc.setFontSize(11);
+            doc.text(`Member Name: ${m.name} (Age: ${m.age} yrs)`, 14, 45);
+            doc.text(`Phone Number: ${m.phone}`, 14, 53);
+            doc.text(`Join Month: ${m.joinMonth || '2026-01'}`, 14, 61);
+            doc.text(`Total Personal Savings Accumulated: Rs. ${totalSavings}`, 14, 69);
+
+            let loanRows = [];
+            mLoans.forEach(l => {
+                (l.repayments || []).forEach(r => {
+                    loanRows.push([r.date, `Rs. ${l.amount}`, `Rs. ${r.amount}`, r.type]);
+                });
+            });
+
+            if(loanRows.length > 0) {
+                doc.autoTable({
+                    head: [['Date', 'Original Loan', 'Amount Repaid', 'Repayment Type']],
+                    body: loanRows,
+                    startY: 78
+                });
+            } else {
+                doc.text("No active or historical loan transactions found.", 14, 82);
+            }
+
+            doc.save(`Passbook_${m.name.replace(/\s+/g, '_')}.pdf`);
+        }
+
+        function changeMonth(val) { appData.currentMonth = val; saveAppData(); }
+        
+        function toggleSavings(id) {
+            if(appData.currentUser.role !== 'admin') { alert('Sirf Admin hi status change kar sakta hai!'); return; }
+            let key = `${appData.currentMonth}_${id}`;
+            let current = appData.savings[key];
+            if (current && typeof current === 'object') {
+                appData.savings[key] = !current.paid;
+            } else {
+                appData.savings[key] = !current;
+            }
+            saveAppData();
+        }
+
+        function openAdvanceModal(id, name) {
+            if(appData.currentUser.role !== 'admin') return;
+            document.getElementById('advMemberId').value = id;
+            document.getElementById('advMemberNameDisplay').innerText = `Member: ${name} (Current Month: ${appData.currentMonth})`;
+            document.getElementById('advMonthsCount').value = "1";
+            document.getElementById('advanceModal').classList.remove('hidden');
+        }
+        function closeAdvanceModal() { document.getElementById('advanceModal').classList.add('hidden'); }
+        function saveAdvancePayment() {
+            let id = parseInt(document.getElementById('advMemberId').value);
+            let advMonths = parseInt(document.getElementById('advMonthsCount').value) || 1;
+            let key = `${appData.currentMonth}_${id}`;
+            appData.savings[key] = { paid: true, advanceMonths: advMonths };
+            closeAdvanceModal();
+            saveAppData();
+            alert(`Successfully recorded ₹${500 * (advMonths + 1)} including ${advMonths} month(s) advance!`);
+        }
+
+        function openMemberModal(id = null) {
+            if(appData.currentUser.role !== 'admin') return;
+            if(id) {
+                let m = appData.members.find(x => x.id === id);
+                document.getElementById('editMemberId').value = m.id;
+                document.getElementById('memberInputName').value = m.name;
+                document.getElementById('memberInputAge').value = m.age || 30;
+                document.getElementById('memberInputPhone').value = m.phone;
+                document.getElementById('memberInputPhoto').value = m.photo || "";
+                document.getElementById('memberInputJoinMonth').value = m.joinMonth || "2026-01";
+                document.getElementById('memberModalTitle').innerText = "Edit Member Details";
+            } else {
+                document.getElementById('editMemberId').value = "";
+                document.getElementById('memberInputName').value = "";
+                document.getElementById('memberInputAge').value = "";
+                document.getElementById('memberInputPhone').value = "";
+                document.getElementById('memberInputPhoto').value = "";
+                document.getElementById('memberInputJoinMonth').value = appData.currentMonth;
+                document.getElementById('memberModalTitle').innerText = "Add New Member";
+            }
+            document.getElementById('memberModal').classList.remove('hidden');
+        }
+
+        function closeMemberModal() { document.getElementById('memberModal').classList.add('hidden'); }
+
+        function saveMemberData() {
+            let id = document.getElementById('editMemberId').value;
+            let name = document.getElementById('memberInputName').value.trim();
+            let age = parseInt(document.getElementById('memberInputAge').value) || 25;
+            let phone = document.getElementById('memberInputPhone').value.trim();
+            let photo = document.getElementById('memberInputPhoto').value.trim() || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150";
+            let joinMonth = document.getElementById('memberInputJoinMonth').value || "2026-01";
+            
+            if(!name || !phone) { alert('Naam aur phone number bharein.'); return; }
+
+            if(id) {
+                let m = appData.members.find(x => x.id === parseInt(id));
+                if(m) { 
+                    m.name = name; 
+                    m.age = age;
+                    m.phone = phone; 
+                    m.photo = photo;
+                    m.joinMonth = joinMonth; 
+                    alert(`Member "${name}" update ho gaya hai!`);
+                }
+            } else {
+                let newId = appData.members.length > 0 ? Math.max(...appData.members.map(m => m.id)) + 1 : 1;
+                appData.members.push({ id: newId, name, age, phone, photo, joinMonth });
+                alert(`Naya member "${name}" add ho gaya hai!`);
+            }
+            closeMemberModal();
+            saveAppData();
+        }
+
+        function deleteMember(id, name) {
+            if(appData.currentUser.role !== 'admin') return;
+            if(confirm(`Kya aap "${name}" ko delete karna chahte hain?`)) {
+                appData.members = appData.members.filter(m => m.id !== id);
+                alert(`Member delete ho gaya hai.`);
+                saveAppData();
+            }
+        }
+
+        function renderLoansTab() {
+            const isAdmin = appData.currentUser.role === 'admin';
+            const memberName = isAdmin ? null : appData.currentUser.name;
+            const loansList = isAdmin ? appData.loans : appData.loans.filter(l => l.memberName === memberName);
+
+            return `
+                <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-6 shadow-xl">
+                    <div class="flex flex-wrap justify-between items-center gap-4">
+                        <div>
+                            <h2 class="text-xl font-bold text-white">${isAdmin ? 'અમારી બચત | અમારી સુરક્ષા - Loan Ledger' : 'અમારી બચત | અમારી સુરક્ષા - My Loans'}</h2>
+                            <p class="text-xs text-slate-400">${isAdmin ? 'Members ko diye gaye loan aur interest repayment track karein.' : 'Aapke active ya closed loans.'}</p>
+                        </div>
+                        ${isAdmin ? `<button onclick="openLoanModal()" class="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition"><i data-lucide="plus-circle" class="w-4 h-4"></i> Issue New Loan</button>` : ''}
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="border-b border-slate-800 text-slate-400 text-xs uppercase">
+                                    <th class="p-3">Member</th>
+                                    <th class="p-3">Loan Amount</th>
+                                    <th class="p-3">Interest Rate</th>
+                                    <th class="p-3">Principal Repaid</th>
+                                    <th class="p-3">Balance Due</th>
+                                    <th class="p-3">Status</th>
+                                    <th class="p-3 text-right">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-800 text-sm">
+                                ${loansList.map(l => {
+                                    const repaidPrincipal = (l.repayments || []).reduce((sum, r) => r.type === 'Principal' ? sum + r.amount : sum, 0);
+                                    const balance = l.amount - repaidPrincipal;
+                                    const status = balance <= 0 ? 'Settled' : 'Active';
+
+                                    return `
+                                        <tr class="hover:bg-slate-800/40 transition">
+                                            <td class="p-3 font-semibold text-white">${l.memberName}</td>
+                                            <td class="p-3 text-indigo-400 font-medium">₹${l.amount}</td>
+                                            <td class="p-3 text-slate-300">${l.rate}% /mo</td>
+                                            <td class="p-3 text-emerald-400">₹${repaidPrincipal}</td>
+                                            <td class="p-3 text-amber-400 font-bold">₹${balance}</td>
+                                            <td class="p-3">
+                                                <span class="px-3 py-1 rounded-full text-xs font-semibold ${status === 'Settled' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}">
+                                                    ${status}
+                                                </span>
+                                            </td>
+                                            <td class="p-3 text-right space-x-2">
+                                                ${isAdmin && status === 'Active' ? `
+                                                    <button onclick="openRepaymentModal(${l.id})" class="px-3 py-1.5 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600 hover:text-white rounded-lg text-xs font-medium transition">Add Repayment</button>
+                                                ` : ''}
+                                                <button onclick="downloadPDFReceipt(${l.id})" class="px-2.5 py-1.5 bg-purple-600/20 text-purple-400 hover:bg-purple-600 hover:text-white rounded-lg text-xs font-medium transition" title="Receipt"><i data-lucide="file-text" class="w-3.5 h-3.5"></i></button>
+                                            </td>
+                                        </tr>
+                                    `;
+                                }).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div id="loanModal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
+                    <div class="bg-slate-900 border border-slate-800 p-6 rounded-3xl w-full max-w-md space-y-4 shadow-2xl animate-scale-in">
+                        <h3 class="text-lg font-bold text-white">Issue New Loan</h3>
+                        <select id="loanMember" onchange="checkLoanEligibility(this.value)" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
+                            ${appData.members.map(m => `<option value="${m.name}">${m.name}</option>`).join('')}
+                        </select>
+                        <div id="eligibilityNotice" class="text-xs bg-indigo-950/50 border border-indigo-500/30 p-2.5 rounded-xl text-indigo-300"></div>
+                        <input type="number" id="loanAmount" oninput="updateEmiPreview()" placeholder="Loan Amount (₹)" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
+                        <input type="number" id="loanRate" oninput="updateEmiPreview()" placeholder="Interest Rate (% per month)" value="2" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
+                        <div id="emiPreviewNotice" class="text-xs bg-emerald-950/50 border border-emerald-500/30 p-2.5 rounded-xl text-emerald-300">💡 Monthly Interest Payment Preview: ₹0 / mo</div>
+                        <input type="date" id="loanDate" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
+                        <div class="flex justify-end gap-3 pt-2">
+                            <button onclick="closeLoanModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-sm">Cancel</button>
+                            <button onclick="saveNewLoan()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm">Issue Loan</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="repaymentModal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
+                    <div class="bg-slate-900 border border-slate-800 p-6 rounded-3xl w-full max-w-md space-y-4 shadow-2xl animate-scale-in">
+                        <h3 class="text-lg font-bold text-white">Add Repayment</h3>
+                        <input type="hidden" id="repayLoanId">
+                        <input type="number" id="repayAmount" placeholder="Amount (₹)" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
+                        <select id="repayType" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
+                            <option value="Principal">Principal (मूलधन)</option>
+                            <option value="Interest">Interest (બ्याज)</option>
+                        </select>
+                        <div class="flex justify-end gap-3 pt-2">
+                            <button onclick="closeRepaymentModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-sm">Cancel</button>
+                            <button onclick="saveRepayment()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm">Save</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function updateEmiPreview() {
+            let amt = parseFloat(document.getElementById('loanAmount').value) || 0;
+            let rate = parseFloat(document.getElementById('loanRate').value) || 0;
+            let monthlyInterest = Math.round((amt * rate) / 100);
+            document.getElementById('emiPreviewNotice').innerHTML = `💡 Monthly Interest Payment Preview: <b>₹${monthlyInterest} / month</b>`;
+        }
+
+        function openLoanModal() {
+            if(appData.currentUser.role !== 'admin') return;
+            document.getElementById('loanDate').value = new Date().toISOString().split('T')[0];
+            document.getElementById('loanModal').classList.remove('hidden');
+            if(appData.members.length > 0) checkLoanEligibility(appData.members[0].name);
+        }
+        function closeLoanModal() { document.getElementById('loanModal').classList.add('hidden'); }
+
+        function checkLoanEligibility(memberName) {
+            let member = appData.members.find(m => m.name === memberName);
+            let memberPaidCount = 0;
+            if(member) {
+                Object.keys(appData.savings).forEach(k => {
+                    if(k.endsWith(`_${member.id}`)) {
+                        let val = appData.savings[k];
+                        if (val === true) memberPaidCount++;
+                        else if (typeof val === 'object' && val.paid) {
+                            memberPaidCount += (1 + (val.advanceMonths || 0));
+                        }
+                    }
+                });
+            }
+            let totalSavings = memberPaidCount * 500;
+            let maxLimit = totalSavings * 3;
+            document.getElementById('eligibilityNotice').innerHTML = `💡 <b>Eligibility:</b> ${memberName} ki total savings ₹${totalSavings} hai. Max recommended loan limit: <b>₹${maxLimit}</b> (3x)`;
+        }
+
+        function saveNewLoan() {
+            let memberName = document.getElementById('loanMember').value;
+            let amount = parseFloat(document.getElementById('loanAmount').value);
+            let rate = parseFloat(document.getElementById('loanRate').value);
+            let date = document.getElementById('loanDate').value || new Date().toISOString().split('T')[0];
+            if(!amount) { alert('Loan amount dalein.'); return; }
+            appData.loans.push({ id: Date.now(), memberName, amount, rate, date, status: "Active", repayments: [] });
+            closeLoanModal();
+            saveAppData();
+        }
+
+        function openRepaymentModal(id) { 
+            if(appData.currentUser.role !== 'admin') return;
+            document.getElementById('repayLoanId').value = id; 
+            document.getElementById('repaymentModal').classList.remove('hidden'); 
+        }
+        function closeRepaymentModal() { document.getElementById('repaymentModal').classList.add('hidden'); }
+        function saveRepayment() {
+            let loanId = parseInt(document.getElementById('repayLoanId').value);
+            let amount = parseFloat(document.getElementById('repayAmount').value);
+            let type = document.getElementById('repayType').value;
+            if(!amount) { alert('Amount dalein.'); return; }
+            let loan = appData.loans.find(l => l.id === loanId);
+            if(loan) {
+                if(!Array.isArray(loan.repayments)) loan.repayments = [];
+                loan.repayments.push({ date: new Date().toISOString().split('T')[0], amount, type });
+                const repaidPrincipal = loan.repayments.reduce((sum, r) => r.type === 'Principal' ? sum + r.amount : sum, 0);
+                if (loan.amount - repaidPrincipal <= 0) loan.status = 'Settled';
+            }
+            closeRepaymentModal();
+            saveAppData();
+        }
+
+        function downloadPDFReceipt(loanId) {
+            let loan = appData.loans.find(l => l.id === loanId);
+            if(!loan) return;
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            doc.setFillColor(16, 185, 129);
+            doc.rect(0, 0, 210, 32, "F");
+            doc.setTextColor(255, 255, 255);
+            doc.setFontSize(16);
+            doc.text("Amari Bachat | Amari Suraksha - Receipt", 14, 21);
+
+            doc.setTextColor(50, 50, 50);
+            doc.setFontSize(11);
+            doc.text(`Member Name: ${loan.memberName}`, 14, 45);
+            doc.text(`Loan Amount: Rs. ${loan.amount}`, 14, 53);
+            doc.text(`Interest Rate: ${loan.rate}% per month`, 14, 61);
+            doc.text(`Issue Date: ${loan.date}`, 14, 69);
+
+            let rows = (loan.repayments || []).map(r => [r.date, `Rs. ${r.amount}`, r.type]);
+            doc.autoTable({
+                head: [['Date', 'Amount Paid', 'Type (Principal/Interest)']],
+                body: rows,
+                startY: 78
+            });
+            doc.save(`Receipt_${loan.memberName.replace(/\s+/g, '_')}.pdf`);
+        }
+
+        function renderExpensesTab() {
+            const isAdmin = appData.currentUser.role === 'admin';
+            const memberName = isAdmin ? null : appData.currentUser.name;
+            const expensesList = isAdmin ? appData.expenses : appData.expenses.filter(e => e.title.includes(memberName));
+
+            return `
+                <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-6 shadow-xl">
+                    <div class="flex flex-wrap justify-between items-center gap-4">
+                        <div>
+                            <h2 class="text-xl font-bold text-white">${isAdmin ? 'અમારી બચત | અમારી સુરક્ષા - Penalties' : 'અમારી બચત | અમારી સુરક્ષા - My Penalties'}</h2>
+                            <p class="text-xs text-slate-400">${isAdmin ? 'Jurmana ya extra income/expense record karein.' : 'Aap par lagi hui late penalties ya charges.'}</p>
+                        </div>
+                        ${isAdmin ? `<button onclick="openExpenseModal()" class="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition"><i data-lucide="plus-circle" class="w-4 h-4"></i> Add Transaction</button>` : ''}
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="border-b border-slate-800 text-slate-400 text-xs uppercase">
+                                    <th class="p-3">Date</th>
+                                    <th class="p-3">Title</th>
+                                    <th class="p-3">Type</th>
+                                    <th class="p-3 text-right">Amount</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-800 text-sm">
+                                ${expensesList.map(e => `
+                                    <tr class="hover:bg-slate-800/40 transition">
+                                        <td class="p-3 text-slate-400">${e.date}</td>
+                                        <td class="p-3 font-semibold text-white">${e.title}</td>
+                                        <td class="p-3"><span class="px-2.5 py-1 rounded-full text-xs font-semibold ${e.type === 'Income' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}">${e.type}</span></td>
+                                        <td class="p-3 text-right font-bold ${e.type === 'Income' ? 'text-emerald-400' : 'text-rose-400'}">₹${e.amount}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div id="expenseModal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
+                    <div class="bg-slate-900 border border-slate-800 p-6 rounded-3xl w-full max-w-md space-y-4 shadow-2xl animate-scale-in">
+                        <h3 class="text-lg font-bold text-white">Add Penalty / Expense</h3>
+                        <input type="text" id="expTitle" placeholder="Title (e.g. Late Penalty)" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
+                        <input type="number" id="expAmount" placeholder="Amount (₹)" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
+                        <select id="expType" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
+                            <option value="Income">Income (Penalty)</option>
+                            <option value="Expense">Expense (Kharcha)</option>
+                        </select>
+                        <div class="flex justify-end gap-3 pt-2">
+                            <button onclick="closeExpenseModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-sm">Cancel</button>
+                            <button onclick="saveExpense()" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm">Save</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function openExpenseModal() { 
+            if(appData.currentUser.role !== 'admin') return;
+            document.getElementById('expenseModal').classList.remove('hidden'); 
+        }
+        function closeExpenseModal() { document.getElementById('expenseModal').classList.add('hidden'); }
+        function saveExpense() {
+            let title = document.getElementById('expTitle').value;
+            let amount = parseFloat(document.getElementById('expAmount').value);
+            let type = document.getElementById('expType').value;
+            if(!title || !amount) { alert('Sabhi fields bharein.'); return; }
+            appData.expenses.push({ id: Date.now(), title, amount, type, date: new Date().toISOString().split('T')[0] });
+            closeExpenseModal();
+            saveAppData();
+        }
+
+        function renderAuditTab() {
+            const isAdmin = appData.currentUser.role === 'admin';
+            let totalSavingsCount = 0;
+            Object.keys(appData.savings).forEach(k => {
+                let val = appData.savings[k];
+                if (val === true) totalSavingsCount++;
+                else if (typeof val === 'object' && val.paid) {
+                    totalSavingsCount += (1 + (val.advanceMonths || 0));
+                }
+            });
+            let totalSavings = totalSavingsCount * 500;
+            let totalInterest = 0;
+            appData.loans.forEach(l => { (l.repayments || []).forEach(r => { if(r.type === 'Interest') totalInterest += r.amount; }); });
+            let totalPenalties = appData.expenses.reduce((acc, e) => e.type === 'Income' ? acc + e.amount : acc - e.amount, 0);
+            let totalProfit = totalInterest + totalPenalties;
+            let grandTotal = totalSavings + totalProfit;
+
+            return `
+                <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-6 shadow-xl">
+                    <div class="flex flex-wrap justify-between items-center gap-4">
+                        <div>
+                            <h2 class="text-xl font-bold text-white">અમારી બચત | અમારી સુરક્ષા - Annual Financial Audit</h2>
+                            <p class="text-xs text-slate-400">Naye members ko unke join month ke anusaar hi profit share diya jata hai.</p>
+                        </div>
+                        <button onclick="exportExcelAudit()" class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-medium transition shadow-lg">
+                            <i data-lucide="file-spreadsheet" class="w-4 h-4"></i> Export to Excel (.xlsx)
+                        </button>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                        <div class="bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50">
+                            <span class="text-slate-400 text-xs block">Total Savings</span>
+                            <span class="text-emerald-400 font-bold text-lg mt-1 block">₹${totalSavings}</span>
+                        </div>
+                        <div class="bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50">
+                            <span class="text-slate-400 text-xs block">Total Interest Earned</span>
+                            <span class="text-cyan-400 font-bold text-lg mt-1 block">₹${totalInterest}</span>
+                        </div>
+                        <div class="bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50">
+                            <span class="text-slate-400 text-xs block">Net Penalties</span>
+                            <span class="text-indigo-400 font-bold text-lg mt-1 block">₹${totalPenalties}</span>
+                        </div>
+                        <div class="bg-indigo-950/60 p-4 rounded-2xl border border-indigo-500/40">
+                            <span class="text-indigo-300 text-xs block font-semibold">Grand Total Fund</span>
+                            <span class="text-emerald-400 font-bold text-lg mt-1 block">₹${grandTotal}</span>
+                        </div>
+                    </div>
+
+                    <div class="pt-4">
+                        <h3 class="text-md font-bold text-white mb-3">Member-wise Active Months & Final Net Worth</h3>
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-left border-collapse">
+                               <thead>
+                                    <tr class="border-b border-slate-800 text-slate-400 text-xs uppercase">
+                                        <th class="p-3">#</th>
+                                        <th class="p-3">Member Name</th>
+                                        <th class="p-3">Age</th>
+                                        <th class="p-3">Join Month</th>
+                                        <th class="p-3">Personal Savings</th>
+                                        <th class="p-3">Active Profit Share</th>
+                                        <th class="p-3 text-right">Final Net Worth</th>
+                                    </tr>
+                                </thead>
+                                <tbody class="divide-y divide-slate-800 text-sm">
+                                    ${appData.members.map((m, idx) => {
+                                        let mMonths = 0;
+                                        Object.keys(appData.savings).forEach(k => {
+                                            if (k.endsWith(`_${m.id}`)) {
+                                                let val = appData.savings[k];
+                                                if (val === true) mMonths++;
+                                                else if (typeof val === 'object' && val.paid) {
+                                                    mMonths += (1 + (val.advanceMonths || 0));
+                                                }
+                                            }
+                                        });
+                                        let mSavings = mMonths * 500;
+
+                                        let joinM = m.joinMonth || "2026-01";
+                                        let [jYr, jMo] = joinM.split('-').map(Number);
+                                        let [curYr, curMo] = appData.currentMonth.split('-').map(Number);
+                                        let activeMonthsCount = Math.max(1, (curYr - jYr) * 12 + (curMo - jMo) + 1);
+                                        
+                                        let totalActiveMemberMonths = appData.members.reduce((sum, mem) => {
+                                            let [jy, jm] = (mem.joinMonth || "2026-01").split('-').map(Number);
+                                            let act = Math.max(1, (curYr - jy) * 12 + (curMo - jm) + 1);
+                                            return sum + act;
+                                        }, 0);
+
+                                        let memberProfitShare = totalActiveMemberMonths > 0 ? Math.round((totalProfit * activeMonthsCount / totalActiveMemberMonths) * 100) / 100 : 0;
+                                        let finalNetWorth = mSavings + memberProfitShare;
+                                        let isCurrentLoggedInUser = !isAdmin && m.name === appData.currentUser.name;
+
+                                        return `
+                                            <tr class="hover:bg-slate-800/40 transition ${isCurrentLoggedInUser ? 'bg-indigo-900/30 font-bold border-l-4 border-indigo-500' : ''}">
+                                                <td class="p-3 text-slate-400">${idx + 1}</td>
+                                                <td class="p-3 text-white flex items-center gap-2">
+                                                    ${m.name}
+                                                    ${isCurrentLoggedInUser ? '<span class="text-[10px] bg-indigo-500 text-white px-2 py-0.5 rounded-full">YOU</span>' : ''}
+                                                </td>
+                                                <td class="p-3 text-slate-300">${m.age || 'N/A'} yrs</td>
+                                                <td class="p-3 text-indigo-300 text-xs font-medium">${joinM}</td>
+                                                <td class="p-3 text-emerald-400 font-medium">₹${mSavings}</td>
+                                                <td class="p-3 text-amber-400 font-medium">+ ₹${memberProfitShare}</td>
+                                                <td class="p-3 text-right font-bold text-indigo-300 text-base">₹${finalNetWorth}</td>
+                                            </tr>
+                                        `;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderQueriesTab() {
+            const isAdmin = appData.currentUser.role === 'admin';
+            const memberName = isAdmin ? null : appData.currentUser.name;
+            const filtered = isAdmin ? appData.queries : appData.queries.filter(q => q.memberName === memberName);
+
+            return `
+                <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-6 shadow-xl">
+                    <div>
+                        <h2 class="text-xl font-bold text-white">અમારી બચત | અમારી સુરક્ષા - Member Queries</h2>
+                        <p class="text-xs text-slate-400">Members apnay sawaal ya request yahan post kar sakte hain.</p>
+                    </div>
+
+                    ${!isAdmin ? `
+                        <div class="bg-slate-800/40 border border-slate-700/50 p-4 rounded-2xl space-y-3">
+                            <h3 class="text-sm font-semibold text-emerald-300">Naya Sawaal Bhejein</h3>
+                            <textarea id="queryText" rows="3" placeholder="Apna message yahan likhein..." class="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-sm text-white focus:outline-none"></textarea>
+                            <button onclick="submitQuery()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition">Send Query</button>
+                        </div>
+                    ` : ''}
+
+                    <div class="space-y-4">
+                        ${filtered.length === 0 ? `<p class="text-slate-400 text-sm italic">Koi query uplabdh nahi hai.</p>` : ''}
+                        ${filtered.slice().reverse().map(q => `
+                            <div class="bg-slate-800/60 border border-slate-700/50 p-4 rounded-2xl space-y-2">
+                                <div class="flex justify-between items-center text-xs text-slate-400">
+                                    <span class="font-semibold text-indigo-300">👤 ${q.memberName}</span>
+                                    <span>📅 ${q.date}</span>
+                                </div>
+                                <p class="text-sm text-white font-medium">${q.text}</p>
+                                ${q.reply ? `<div class="bg-indigo-950/50 border border-indigo-500/30 p-3 rounded-xl mt-2 text-xs"><span class="font-bold text-indigo-400 block mb-1">👑 Admin Reply:</span><p class="text-slate-200">${q.reply}</p></div>` : ''}
+                                ${isAdmin && !q.reply ? `<div class="pt-2 flex gap-2"><input type="text" id="reply_${q.id}" placeholder="Admin reply..." class="flex-grow bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none"><button onclick="sendReply(${q.id})" class="bg-indigo-600 text-white px-3 py-1.5 rounded-xl text-xs">Reply</button></div>` : ''}
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+
+        function submitQuery() {
+            let text = document.getElementById('queryText').value.trim();
+            if(!text) { alert('Message likhein.'); return; }
+            appData.queries.push({ id: Date.now(), memberName: appData.currentUser.name, text, date: new Date().toISOString().split('T')[0], reply: "" });
+            saveAppData();
+        }
+
+        function sendReply(qid) {
+            let replyText = document.getElementById(`reply_${qid}`).value.trim();
+            if(!replyText) { alert('Reply likhein.'); return; }
+            let q = appData.queries.find(x => x.id === qid);
+            if(q) { q.reply = replyText; }
+            saveAppData();
+        }
+
+        render();
+    </script>
+</body>
+</html>
