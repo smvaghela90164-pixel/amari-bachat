@@ -3,7 +3,7 @@ html
 <html lang="gu">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=1280, initial-scale=0.35, maximum-scale=3.0, user-scalable=yes">
     <title>અમારી બચત | અમારી સુરક્ષા - Management Portal</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -25,7 +25,7 @@ html
         .animate-scale-in { animation: scaleIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
     </style>
 </head>
-<body class="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 min-h-screen text-slate-100 selection:bg-emerald-500 selection:text-white">
+<body class="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 min-h-screen text-slate-100 selection:bg-emerald-500 selection:text-white overflow-x-auto">
 
     <!-- Cloud Sync Status Banner -->
     <div id="syncBadge" class="fixed bottom-3 right-3 z-50 bg-slate-900/90 border border-slate-700 px-3 py-1.5 rounded-full text-[11px] flex items-center gap-2 shadow-lg backdrop-blur-md">
@@ -33,12 +33,12 @@ html
         <span id="syncText" class="text-slate-300">Connecting to Cloud...</span>
     </div>
 
-    <div id="app" class="max-w-7xl mx-auto px-4 py-6 animate-fade-in"></div>
+    <div id="app" class="min-w-[1150px] max-w-7xl mx-auto px-4 py-6 animate-fade-in"></div>
 
     <!-- Firebase SDK (Modular v11 via CDN) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
-        import { getDatabase, ref, set, onValue, get } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-database.js";
+        import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-database.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyCCYGVycm5lNTZsP_mm_t-i94Ss8Oi8E34",
@@ -92,7 +92,6 @@ html
                 const cloudData = snapshot.val();
                 window.applyCloudData(cloudData);
             } else {
-                // First time setup: push default/local data to Firebase
                 window.pushInitialDataToCloud();
             }
         }, (error) => {
@@ -105,11 +104,12 @@ html
         const STORAGE_KEY = "amari_bachat_suraksha_v31";
         const SESSION_KEY = "amari_bachat_session_v1";
 
-        // Per-device session (so each member stays logged in independently on their phone)
         let sessionState = JSON.parse(sessionStorage.getItem(SESSION_KEY)) || {
             currentUser: null,
-            activeTab: "dashboard"
+            activeTab: "dashboard",
+            viewMode: "desktop"
         };
+        if (!sessionState.viewMode) sessionState.viewMode = "desktop";
 
         const defaultSharedData = {
             adminCreds: { username: "admin", password: "admin123", displayName: "Main Admin", role: "Super Admin" },
@@ -165,6 +165,22 @@ html
 
         normalizeAppData();
 
+        function applyViewModeLayout() {
+            const root = document.getElementById("app");
+            if (!root) return;
+            if (sessionState.viewMode === "desktop") {
+                root.className = "min-w-[1150px] max-w-7xl mx-auto px-4 py-6 animate-fade-in";
+            } else {
+                root.className = "w-full max-w-7xl mx-auto px-4 py-6 animate-fade-in";
+            }
+        }
+
+        function toggleViewMode() {
+            sessionState.viewMode = sessionState.viewMode === "desktop" ? "mobile" : "desktop";
+            sessionStorage.setItem(SESSION_KEY, JSON.stringify(sessionState));
+            render();
+        }
+
         function getSharedPayload() {
             return {
                 adminCreds: appData.adminCreds,
@@ -218,12 +234,13 @@ html
         }
 
         function render() {
+            applyViewModeLayout();
             const root = document.getElementById("app");
             if (!appData.currentUser) {
                 root.innerHTML = renderLoginScreen();
             } else {
                 root.innerHTML = renderMainApp();
-                if(appData.activeTab === 'dashboard') {
+                if (appData.activeTab === 'dashboard') {
                     initDashboardCharts();
                 }
             }
@@ -231,6 +248,7 @@ html
         }
 
         function renderLoginScreen() {
+            const isDesktopMode = sessionState.viewMode === "desktop";
             return `
                 <div class="min-h-[85vh] flex items-center justify-center animate-fade-in">
                     <div class="bg-slate-900/95 backdrop-blur-2xl border border-slate-800 p-8 rounded-3xl shadow-2xl w-full max-w-md text-center">
@@ -238,7 +256,14 @@ html
                             <i data-lucide="shield-check" class="w-12 h-12"></i>
                         </div>
                         <h1 class="text-2xl font-bold text-emerald-300 tracking-wide">અમારી બચત <span class="text-amber-400">|</span> અમારી સુરક્ષા</h1>
-                        <p class="text-slate-400 text-xs font-semibold uppercase tracking-widest mt-1 mb-6">Savings & Loan Management Portal</p>
+                        <p class="text-slate-400 text-xs font-semibold uppercase tracking-widest mt-1 mb-4">Savings & Loan Management Portal</p>
+
+                        <div class="mb-5">
+                            <button onclick="toggleViewMode()" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-medium bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-slate-700 transition">
+                                <i data-lucide="${isDesktopMode ? 'smartphone' : 'monitor'}" class="w-3.5 h-3.5"></i>
+                                ${isDesktopMode ? 'Switch to Mobile View' : 'Switch to Desktop Wide View'}
+                            </button>
+                        </div>
 
                         <div class="space-y-6 text-left">
                             <div class="bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50">
@@ -275,7 +300,7 @@ html
         function handleAdminLogin() {
             const u = document.getElementById('adminUser').value;
             const p = document.getElementById('adminPass').value;
-            if(u === appData.adminCreds.username && p === appData.adminCreds.password) {
+            if (u === appData.adminCreds.username && p === appData.adminCreds.password) {
                 appData.currentUser = { role: 'admin' };
                 appData.activeTab = 'dashboard';
                 saveSessionOnly();
@@ -286,7 +311,7 @@ html
 
         function handleMemberLogin() {
             const name = document.getElementById('selectedMember').value;
-            if(!name) { alert('Kripya apna naam select karein.'); return; }
+            if (!name) { alert('Kripya apna naam select karein.'); return; }
             appData.currentUser = { role: 'member', name: name };
             appData.activeTab = 'dashboard';
             saveSessionOnly();
@@ -299,6 +324,7 @@ html
 
         function renderMainApp() {
             const isAdmin = appData.currentUser.role === 'admin';
+            const isDesktopMode = sessionState.viewMode === "desktop";
             return `
                 <header class="bg-slate-900/80 backdrop-blur-xl border border-slate-800 rounded-2xl p-4 mb-6 flex flex-wrap justify-between items-center gap-4 shadow-xl">
                     <div class="flex items-center gap-3 bg-slate-800/80 px-4 py-2 rounded-2xl border border-emerald-500/30 shadow-inner">
@@ -320,6 +346,10 @@ html
                         <button onclick="setTab('expenses')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'expenses' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Penalties</button>
                         <button onclick="setTab('audit')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'audit' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Audit</button>
                         <button onclick="setTab('queries')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'queries' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Chat</button>
+                        <button onclick="toggleViewMode()" class="px-3 py-2 rounded-xl text-xs font-medium bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-600 hover:text-white transition flex items-center gap-1.5" title="Toggle Desktop / Mobile Screen Layout">
+                            <i data-lucide="${isDesktopMode ? 'smartphone' : 'monitor'}" class="w-4 h-4"></i>
+                            ${isDesktopMode ? 'Mobile View' : 'Desktop View'}
+                        </button>
                         ${isAdmin ? `<button onclick="openSettingsModal()" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition" title="Admin Settings"><i data-lucide="settings" class="w-5 h-5"></i></button>` : ''}
                         <button onclick="logout()" class="px-3 py-2 bg-rose-600/20 text-rose-400 hover:bg-rose-600 hover:text-white rounded-xl text-xs font-medium transition" title="Logout"><i data-lucide="log-out" class="w-4 h-4"></i></button>
                     </div>
@@ -423,11 +453,11 @@ html
             let newP = document.getElementById('newAdminPass').value.trim();
             let newUpi = document.getElementById('newUpiId').value.trim();
 
-            if(!newU || !newP || !newName) { alert('Sabhi fields bharein.'); return; }
+            if (!newU || !newP || !newName) { alert('Sabhi fields bharein.'); return; }
             appData.adminCreds.displayName = newName;
             appData.adminCreds.username = newU;
             appData.adminCreds.password = newP;
-            if(newUpi) appData.paymentSettings.upiId = newUpi;
+            if (newUpi) appData.paymentSettings.upiId = newUpi;
 
             alert('Settings updated & synced to cloud!');
             closeSettingsModal();
@@ -495,7 +525,7 @@ html
                 let mSavings = mMonths * 500;
                 let mInterestPaid = 0;
                 appData.loans.filter(l => l.memberName === m.name).forEach(l => {
-                    (l.repayments || []).forEach(r => { if(r.type === 'Interest') mInterestPaid += r.amount; });
+                    (l.repayments || []).forEach(r => { if (r.type === 'Interest') mInterestPaid += r.amount; });
                 });
                 return {
                     "#": idx + 1,
@@ -543,10 +573,10 @@ html
             let count = 0;
             appData.members.forEach(m => {
                 let res = checkMemberPaidStatus(m.id, appData.currentMonth);
-                if(!res.status) {
+                if (!res.status) {
                     let penaltyTitle = `Late Savings Penalty - ${m.name} (${appData.currentMonth})`;
                     let alreadyExists = appData.expenses.some(e => e.title === penaltyTitle);
-                    if(!alreadyExists) {
+                    if (!alreadyExists) {
                         appData.expenses.push({
                             id: Date.now() + Math.floor(Math.random() * 1000),
                             title: penaltyTitle,
@@ -574,8 +604,8 @@ html
             let today = new Date();
             let dateNum = today.getDate();
             let statusBadge = "";
-            if(dateNum <= 4) statusBadge = `<span class="px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-xs font-semibold">Phase 1: Payment Open (1-4)</span>`;
-            else if(dateNum >= 5 && dateNum <= 10) statusBadge = `<span class="px-3 py-1 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-full text-xs font-semibold">Phase 2: Auto Notification (5-10)</span>`;
+            if (dateNum <= 4) statusBadge = `<span class="px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-xs font-semibold">Phase 1: Payment Open (1-4)</span>`;
+            else if (dateNum >= 5 && dateNum <= 10) statusBadge = `<span class="px-3 py-1 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-full text-xs font-semibold">Phase 2: Auto Notification (5-10)</span>`;
             else statusBadge = `<span class="px-3 py-1 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded-full text-xs font-semibold">Phase 3: Late Penalty Active (>10th)</span>`;
 
             const isAdmin = appData.currentUser.role === 'admin';
@@ -672,13 +702,13 @@ html
 
         function sendBulkWhatsAppReminders() {
             let selectedCheckboxes = document.querySelectorAll('.member-checkbox:checked');
-            if(selectedCheckboxes.length === 0) { alert('Kripya kam se kam ek member select karein!'); return; }
+            if (selectedCheckboxes.length === 0) { alert('Kripya kam se kam ek member select karein!'); return; }
 
             let count = 0;
             selectedCheckboxes.forEach(cb => {
                 let mId = parseInt(cb.getAttribute('data-member-id'));
                 let m = appData.members.find(x => x.id === mId);
-                if(m) {
+                if (m) {
                     let msg = formatCustomWhatsAppMessage(m.name);
                     window.open(`https://wa.me/91${m.phone}?text=${encodeURIComponent(msg)}`, '_blank');
                     count++;
@@ -689,16 +719,16 @@ html
 
         function sendCustomBroadcast() {
             let customText = document.getElementById('customBroadcastText').value.trim();
-            if(!customText) { alert('Pehle custom message type karein!'); return; }
+            if (!customText) { alert('Pehle custom message type karein!'); return; }
 
             let selectedCheckboxes = document.querySelectorAll('.member-checkbox:checked');
-            if(selectedCheckboxes.length === 0) { alert('Kripya kam se kam ek member select karein!'); return; }
+            if (selectedCheckboxes.length === 0) { alert('Kripya kam se kam ek member select karein!'); return; }
 
             let count = 0;
             selectedCheckboxes.forEach(cb => {
                 let mId = parseInt(cb.getAttribute('data-member-id'));
                 let m = appData.members.find(x => x.id === mId);
-                if(m) {
+                if (m) {
                     let finalMsg = `Hello ${m.name},\n${customText}\n- 'અમારી બચત | અમારી સુરક્ષા' Admin`;
                     window.open(`https://wa.me/91${m.phone}?text=${encodeURIComponent(finalMsg)}`, '_blank');
                     count++;
@@ -712,7 +742,7 @@ html
             const memberName = isAdmin ? null : appData.currentUser.name;
             const memberObj = isAdmin ? null : appData.members.find(m => m.name === memberName);
 
-            if(!isAdmin && memberObj) {
+            if (!isAdmin && memberObj) {
                 let memberTotalPaidMonths = 0;
                 Object.keys(appData.savings).forEach(k => {
                     if (k.endsWith(`_${memberObj.id}`)) {
@@ -791,7 +821,7 @@ html
             let totalSavings = totalSavingsCount * 500;
 
             let totalInterest = 0;
-            appData.loans.forEach(l => { (l.repayments || []).forEach(r => { if(r.type === 'Interest') totalInterest += r.amount; }); });
+            appData.loans.forEach(l => { (l.repayments || []).forEach(r => { if (r.type === 'Interest') totalInterest += r.amount; }); });
             let activeLoansTotal = appData.loans.filter(l => l.status === 'Active').reduce((acc, l) => {
                 let repaidPrincipal = (l.repayments || []).reduce((sum, r) => r.type === 'Principal' ? sum + r.amount : sum, 0);
                 return acc + (l.amount - repaidPrincipal);
@@ -855,7 +885,7 @@ html
         function initDashboardCharts() {
             setTimeout(() => {
                 const ctx = document.getElementById('financialDonutChart');
-                if(!ctx) return;
+                if (!ctx) return;
                 
                 let totalSavingsCount = 0;
                 Object.keys(appData.savings).forEach(k => {
@@ -867,10 +897,10 @@ html
                 });
                 let totalSavings = totalSavingsCount * 500;
                 let totalInterest = 0;
-                appData.loans.forEach(l => { (l.repayments || []).forEach(r => { if(r.type === 'Interest') totalInterest += r.amount; }); });
+                appData.loans.forEach(l => { (l.repayments || []).forEach(r => { if (r.type === 'Interest') totalInterest += r.amount; }); });
                 let totalPenaltiesNet = appData.expenses.reduce((acc, e) => e.type === 'Income' ? acc + e.amount : acc - e.amount, 0);
 
-                if(myChartInstance) myChartInstance.destroy();
+                if (myChartInstance) myChartInstance.destroy();
                 myChartInstance = new Chart(ctx, {
                     type: 'doughnut',
                     data: {
@@ -1014,7 +1044,7 @@ html
 
         function downloadMemberPassbookPDF(memberId) {
             let m = appData.members.find(x => x.id === memberId);
-            if(!m) return;
+            if (!m) return;
 
             let memberTotalPaidMonths = 0;
             Object.keys(appData.savings).forEach(k => {
@@ -1051,7 +1081,7 @@ html
                 });
             });
 
-            if(loanRows.length > 0) {
+            if (loanRows.length > 0) {
                 doc.autoTable({
                     head: [['Date', 'Original Loan', 'Amount Repaid', 'Repayment Type']],
                     body: loanRows,
@@ -1067,7 +1097,7 @@ html
         function changeMonth(val) { appData.currentMonth = val; saveAppData(); }
         
         function toggleSavings(id) {
-            if(appData.currentUser.role !== 'admin') { alert('Sirf Admin hi status change kar sakta hai!'); return; }
+            if (appData.currentUser.role !== 'admin') { alert('Sirf Admin hi status change kar sakta hai!'); return; }
             let key = `${appData.currentMonth}_${id}`;
             let current = appData.savings[key];
             if (current && typeof current === 'object') {
@@ -1079,7 +1109,7 @@ html
         }
 
         function openAdvanceModal(id, name) {
-            if(appData.currentUser.role !== 'admin') return;
+            if (appData.currentUser.role !== 'admin') return;
             document.getElementById('advMemberId').value = id;
             document.getElementById('advMemberNameDisplay').innerText = `Member: ${name} (Current Month: ${appData.currentMonth})`;
             document.getElementById('advMonthsCount').value = "1";
@@ -1097,8 +1127,8 @@ html
         }
 
         function openMemberModal(id = null) {
-            if(appData.currentUser.role !== 'admin') return;
-            if(id) {
+            if (appData.currentUser.role !== 'admin') return;
+            if (id) {
                 let m = appData.members.find(x => x.id === id);
                 document.getElementById('editMemberId').value = m.id;
                 document.getElementById('memberInputName').value = m.name;
@@ -1129,11 +1159,11 @@ html
             let photo = document.getElementById('memberInputPhoto').value.trim() || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150";
             let joinMonth = document.getElementById('memberInputJoinMonth').value || "2026-01";
             
-            if(!name || !phone) { alert('Naam aur phone number bharein.'); return; }
+            if (!name || !phone) { alert('Naam aur phone number bharein.'); return; }
 
-            if(id) {
+            if (id) {
                 let m = appData.members.find(x => x.id === parseInt(id));
-                if(m) { 
+                if (m) { 
                     m.name = name; 
                     m.age = age;
                     m.phone = phone; 
@@ -1151,8 +1181,8 @@ html
         }
 
         function deleteMember(id, name) {
-            if(appData.currentUser.role !== 'admin') return;
-            if(confirm(`Kya aap "${name}" ko delete karna chahte hain?`)) {
+            if (appData.currentUser.role !== 'admin') return;
+            if (confirm(`Kya aap "${name}" ko delete karna chahte hain?`)) {
                 appData.members = appData.members.filter(m => m.id !== id);
                 alert(`Member delete ho gaya hai.`);
                 saveAppData();
@@ -1263,19 +1293,19 @@ html
         }
 
         function openLoanModal() {
-            if(appData.currentUser.role !== 'admin') return;
+            if (appData.currentUser.role !== 'admin') return;
             document.getElementById('loanDate').value = new Date().toISOString().split('T')[0];
             document.getElementById('loanModal').classList.remove('hidden');
-            if(appData.members.length > 0) checkLoanEligibility(appData.members[0].name);
+            if (appData.members.length > 0) checkLoanEligibility(appData.members[0].name);
         }
         function closeLoanModal() { document.getElementById('loanModal').classList.add('hidden'); }
 
         function checkLoanEligibility(memberName) {
             let member = appData.members.find(m => m.name === memberName);
             let memberPaidCount = 0;
-            if(member) {
+            if (member) {
                 Object.keys(appData.savings).forEach(k => {
-                    if(k.endsWith(`_${member.id}`)) {
+                    if (k.endsWith(`_${member.id}`)) {
                         let val = appData.savings[k];
                         if (val === true) memberPaidCount++;
                         else if (typeof val === 'object' && val.paid) {
@@ -1294,14 +1324,14 @@ html
             let amount = parseFloat(document.getElementById('loanAmount').value);
             let rate = parseFloat(document.getElementById('loanRate').value);
             let date = document.getElementById('loanDate').value || new Date().toISOString().split('T')[0];
-            if(!amount) { alert('Loan amount dalein.'); return; }
+            if (!amount) { alert('Loan amount dalein.'); return; }
             appData.loans.push({ id: Date.now(), memberName, amount, rate, date, status: "Active", repayments: [] });
             closeLoanModal();
             saveAppData();
         }
 
         function openRepaymentModal(id) { 
-            if(appData.currentUser.role !== 'admin') return;
+            if (appData.currentUser.role !== 'admin') return;
             document.getElementById('repayLoanId').value = id; 
             document.getElementById('repaymentModal').classList.remove('hidden'); 
         }
@@ -1310,10 +1340,10 @@ html
             let loanId = parseInt(document.getElementById('repayLoanId').value);
             let amount = parseFloat(document.getElementById('repayAmount').value);
             let type = document.getElementById('repayType').value;
-            if(!amount) { alert('Amount dalein.'); return; }
+            if (!amount) { alert('Amount dalein.'); return; }
             let loan = appData.loans.find(l => l.id === loanId);
-            if(loan) {
-                if(!Array.isArray(loan.repayments)) loan.repayments = [];
+            if (loan) {
+                if (!Array.isArray(loan.repayments)) loan.repayments = [];
                 loan.repayments.push({ date: new Date().toISOString().split('T')[0], amount, type });
                 const repaidPrincipal = loan.repayments.reduce((sum, r) => r.type === 'Principal' ? sum + r.amount : sum, 0);
                 if (loan.amount - repaidPrincipal <= 0) loan.status = 'Settled';
@@ -1324,7 +1354,7 @@ html
 
         function downloadPDFReceipt(loanId) {
             let loan = appData.loans.find(l => l.id === loanId);
-            if(!loan) return;
+            if (!loan) return;
             const { jsPDF } = window.jspdf;
             const doc = new jsPDF();
             doc.setFillColor(16, 185, 129);
@@ -1407,7 +1437,7 @@ html
         }
 
         function openExpenseModal() { 
-            if(appData.currentUser.role !== 'admin') return;
+            if (appData.currentUser.role !== 'admin') return;
             document.getElementById('expenseModal').classList.remove('hidden'); 
         }
         function closeExpenseModal() { document.getElementById('expenseModal').classList.add('hidden'); }
@@ -1415,7 +1445,7 @@ html
             let title = document.getElementById('expTitle').value;
             let amount = parseFloat(document.getElementById('expAmount').value);
             let type = document.getElementById('expType').value;
-            if(!title || !amount) { alert('Sabhi fields bharein.'); return; }
+            if (!title || !amount) { alert('Sabhi fields bharein.'); return; }
             appData.expenses.push({ id: Date.now(), title, amount, type, date: new Date().toISOString().split('T')[0] });
             closeExpenseModal();
             saveAppData();
@@ -1433,7 +1463,7 @@ html
             });
             let totalSavings = totalSavingsCount * 500;
             let totalInterest = 0;
-            appData.loans.forEach(l => { (l.repayments || []).forEach(r => { if(r.type === 'Interest') totalInterest += r.amount; }); });
+            appData.loans.forEach(l => { (l.repayments || []).forEach(r => { if (r.type === 'Interest') totalInterest += r.amount; }); });
             let totalPenalties = appData.expenses.reduce((acc, e) => e.type === 'Income' ? acc + e.amount : acc - e.amount, 0);
             let totalProfit = totalInterest + totalPenalties;
             let grandTotal = totalSavings + totalProfit;
@@ -1576,16 +1606,16 @@ html
 
         function submitQuery() {
             let text = document.getElementById('queryText').value.trim();
-            if(!text) { alert('Message likhein.'); return; }
+            if (!text) { alert('Message likhein.'); return; }
             appData.queries.push({ id: Date.now(), memberName: appData.currentUser.name, text, date: new Date().toISOString().split('T')[0], reply: "" });
             saveAppData();
         }
 
         function sendReply(qid) {
             let replyText = document.getElementById(`reply_${qid}`).value.trim();
-            if(!replyText) { alert('Reply likhein.'); return; }
+            if (!replyText) { alert('Reply likhein.'); return; }
             let q = appData.queries.find(x => x.id === qid);
-            if(q) { q.reply = replyText; }
+            if (q) { q.reply = replyText; }
             saveAppData();
         }
 
