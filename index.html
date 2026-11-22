@@ -1,3 +1,4 @@
+html
 <!DOCTYPE html>
 <html lang="gu">
 <head>
@@ -84,7 +85,6 @@
             }
         }
 
-        // Initial load & real-time listener for all devices
         onValue(sharedDataRef, (snapshot) => {
             updateSyncStatus("connected");
             if (snapshot.exists()) {
@@ -100,7 +100,7 @@
     </script>
 
     <script>
-        const STORAGE_KEY = "amari_bachat_suraksha_v31";
+        const STORAGE_KEY = "amari_bachat_suraksha_v32";
         const SESSION_KEY = "amari_bachat_session_v1";
         const DEFAULT_MEMBER_PHOTO = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150";
 
@@ -157,7 +157,7 @@
 
         function formatMonthMMYYYY(yyyymm) {
             if (!yyyymm || typeof yyyymm !== "string") return "-";
-            const parts = yyyymm.split("-");
+            const parts = yyyymm.trim().split("-");
             if (parts.length === 2 && parts[0].length === 4) {
                 return `${parts[1].padStart(2, "0")}-${parts[0]}`;
             }
@@ -673,21 +673,42 @@
             XLSX.writeFile(wb, `Amari_Bachat_Suraksha_Audit_${new Date().toISOString().split('T')[0]}.xlsx`);
         }
 
-        function downloadDashboardMetricPDF(metricKey) {
+        function savePdfUnique(doc, baseFileName) {
+            const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+            const finalName = `${baseFileName}_${stamp}.pdf`;
+            try {
+                const blob = doc.output("blob");
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = finalName;
+                document.body.appendChild(link);
+                link.click();
+                setTimeout(() => {
+                    document.body.removeChild(link);
+                    URL.revokeObjectURL(url);
+                }, 1500);
+            } catch (e) {
+                doc.save(finalName);
+            }
+        }
+
+        window.downloadMetricPDF = function(rawType) {
             const jsPDFRef = window.jspdf && window.jspdf.jsPDF;
             if (!jsPDFRef) {
-                alert("PDF library abhi load nahi hui, page refresh karke dobara try karein.");
+                alert("PDF library load nahi hui, page refresh karke try karein.");
                 return;
             }
+            const metricType = String(rawType || "").trim().toLowerCase();
             const doc = new jsPDFRef();
 
             let totalSavingsCount = 0;
             let savingsRows = [];
-            Object.keys(appData.savings).sort().forEach(k => {
+            Object.keys(appData.savings || {}).sort().forEach(k => {
                 let val = appData.savings[k];
-                let parts = k.split('_');
-                let mId = parseInt(parts.pop());
-                let rawMonthKey = parts.join('_');
+                let parts = String(k).split("_");
+                let mId = parseInt(parts.pop(), 10);
+                let rawMonthKey = parts.join("_");
                 let formattedMonth = formatMonthMMYYYY(rawMonthKey);
                 let member = appData.members.find(x => x.id === mId);
                 let mName = member ? member.name : `Member #${mId}`;
@@ -695,8 +716,8 @@
                 if (val === true) {
                     totalSavingsCount += 1;
                     savingsRows.push([mName, formattedMonth, "1 Month (Paid)", "Rs. 500"]);
-                } else if (val && typeof val === 'object' && val.paid) {
-                    let adv = parseInt(val.advanceMonths) || 0;
+                } else if (val && typeof val === "object" && val.paid) {
+                    let adv = parseInt(val.advanceMonths, 10) || 0;
                     let monthsCredited = 1 + adv;
                     totalSavingsCount += monthsCredited;
                     savingsRows.push([mName, formattedMonth, `1 Paid + ${adv} Adv (${monthsCredited}M)`, `Rs. ${monthsCredited * 500}`]);
@@ -706,15 +727,15 @@
 
             let totalInterest = 0;
             let interestRows = [];
-            appData.loans.forEach(l => {
+            (appData.loans || []).forEach(l => {
                 (l.repayments || []).forEach(r => {
-                    if (r.type === 'Interest') {
+                    if (r.type === "Interest") {
                         let amt = parseFloat(r.amount) || 0;
                         totalInterest += amt;
                         interestRows.push([
                             r.date || l.date || "-",
                             l.memberName,
-                            `Loan #${l.id} (Amt: Rs. ${l.amount})`,
+                            `Loan #${l.id} (Rs. ${l.amount})`,
                             l.deleted ? "Deleted Loan" : "Active Loan",
                             `Rs. ${amt}`
                         ]);
@@ -724,8 +745,8 @@
 
             let activeLoansTotal = 0;
             let activeLoanRows = [];
-            appData.loans.filter(l => !l.deleted && l.status === 'Active').forEach(l => {
-                let repaidPrincipal = (l.repayments || []).reduce((sum, r) => r.type === 'Principal' ? sum + (parseFloat(r.amount) || 0) : sum, 0);
+            (appData.loans || []).filter(l => !l.deleted && l.status === "Active").forEach(l => {
+                let repaidPrincipal = (l.repayments || []).reduce((sum, r) => r.type === "Principal" ? sum + (parseFloat(r.amount) || 0) : sum, 0);
                 let balance = (parseFloat(l.amount) || 0) - repaidPrincipal;
                 if (balance > 0) {
                     activeLoansTotal += balance;
@@ -739,9 +760,9 @@
                 }
             });
 
-            let totalPenaltiesNet = appData.expenses.reduce((acc, e) => {
+            let totalPenaltiesNet = (appData.expenses || []).reduce((acc, e) => {
                 let amt = parseFloat(e.amount) || 0;
-                return e.type === 'Income' ? acc + amt : acc - amt;
+                return e.type === "Income" ? acc + amt : acc - amt;
             }, 0);
             let netTotalFund = totalSavings + totalInterest + totalPenaltiesNet;
             let availableCash = netTotalFund - activeLoansTotal;
@@ -750,97 +771,97 @@
             doc.rect(0, 0, 210, 32, "F");
             doc.setTextColor(255, 255, 255);
             doc.setFontSize(15);
-            doc.text("Amari Bachat | Amari Suraksha - Dashboard Report", 14, 20);
+            doc.text("Amari Bachat | Amari Suraksha - Report", 14, 20);
 
             doc.setTextColor(40, 40, 40);
             doc.setFontSize(10);
-            doc.text(`Generated Date: ${new Date().toISOString().split('T')[0]} | Current Month: ${formatMonthMMYYYY(appData.currentMonth)}`, 14, 41);
+            doc.text(`Generated Date: ${new Date().toISOString().split("T")[0]} | Month: ${formatMonthMMYYYY(appData.currentMonth)}`, 14, 41);
 
-            let title = "";
+            let reportHeading = "";
             let summaryLines = [];
             let headers = [];
             let bodyRows = [];
-            let fileName = "Dashboard_Report.pdf";
+            let filePrefix = "Report";
 
-            if (metricKey === "savings") {
-                title = "Total Savings Breakdown Report";
+            if (metricType === "savings") {
+                reportHeading = "TOTAL SAVINGS BREAKDOWN";
                 summaryLines = [
-                    `Calculation: ${totalSavingsCount} Months x Rs. 500 = Rs. ${totalSavings}`,
+                    `Formula: ${totalSavingsCount} Months x Rs. 500 = Rs. ${totalSavings}`,
                     `Total Savings: Rs. ${totalSavings}`
                 ];
                 headers = ["Member Name", "Month (MM-YYYY)", "Months Credited", "Amount"];
-                bodyRows = savingsRows.length > 0 ? savingsRows : [["-", "-", "No savings entries", "Rs. 0"]];
-                fileName = "Total_Savings_Report.pdf";
-            } else if (metricKey === "interest") {
-                title = "Interest Earned Breakdown Report";
+                bodyRows = savingsRows.length > 0 ? savingsRows : [["-", "-", "No savings recorded", "Rs. 0"]];
+                filePrefix = "Total_Savings";
+            } else if (metricType === "interest") {
+                reportHeading = "INTEREST EARNED BREAKDOWN";
                 summaryLines = [
-                    `Calculation: Sum of all Interest repayments across loans`,
+                    `Formula: Sum of all Interest repayments = Rs. ${totalInterest}`,
                     `Total Interest Earned: Rs. ${totalInterest}`
                 ];
                 headers = ["Date", "Member Name", "Loan Reference", "Loan Status", "Interest Amount"];
-                bodyRows = interestRows.length > 0 ? interestRows : [["-", "-", "-", "No interest entries", "Rs. 0"]];
-                fileName = "Interest_Earned_Report.pdf";
-            } else if (metricKey === "active_loans") {
-                title = "Active Loans Out Report";
+                bodyRows = interestRows.length > 0 ? interestRows : [["-", "-", "-", "No interest recorded", "Rs. 0"]];
+                filePrefix = "Interest_Earned";
+            } else if (metricType === "loans") {
+                reportHeading = "ACTIVE LOANS OUT BREAKDOWN";
                 summaryLines = [
-                    `Calculation: Sum of pending principal on non-deleted Active loans`,
+                    `Formula: Sum of remaining principal on Active loans = Rs. ${activeLoansTotal}`,
                     `Total Active Loans Out: Rs. ${activeLoansTotal}`
                 ];
-                headers = ["Member Name", "Issue Date", "Loan Amount", "Principal Repaid", "Balance Due"];
+                headers = ["Member Name", "Issue Date", "Loan Amount", "Principal Paid", "Balance Due"];
                 bodyRows = activeLoanRows.length > 0 ? activeLoanRows : [["-", "-", "-", "-", "No active loans"]];
-                fileName = "Active_Loans_Out_Report.pdf";
-            } else if (metricKey === "available_cash") {
-                title = "Available Cash Report";
+                filePrefix = "Active_Loans_Out";
+            } else if (metricType === "cash") {
+                reportHeading = "AVAILABLE CASH BREAKDOWN";
                 summaryLines = [
-                    `Available Cash = Net Total Fund (Rs. ${netTotalFund}) - Active Loans Out (Rs. ${activeLoansTotal}) = Rs. ${availableCash}`
+                    `Formula: Net Total Fund (Rs. ${netTotalFund}) - Active Loans Out (Rs. ${activeLoansTotal}) = Rs. ${availableCash}`
                 ];
-                headers = ["Component", "Details", "Amount"];
+                headers = ["Item", "Description", "Amount"];
                 bodyRows = [
                     ["Total Savings", `${totalSavingsCount} months x Rs. 500`, `Rs. ${totalSavings}`],
-                    ["Interest Earned", "All interest repayments", `Rs. ${totalInterest}`],
+                    ["Interest Earned", "Total interest received", `Rs. ${totalInterest}`],
                     ["Net Penalties", "Penalty income minus expenses", `Rs. ${totalPenaltiesNet}`],
-                    ["Less: Active Loans Out", "Pending principal on active loans", `- Rs. ${activeLoansTotal}`],
-                    ["Available Cash", "Final cash available", `Rs. ${availableCash}`]
+                    ["Less: Active Loans Out", "Pending active loan principal", `- Rs. ${activeLoansTotal}`],
+                    ["Available Cash", "Cash in hand / available", `Rs. ${availableCash}`]
                 ];
-                fileName = "Available_Cash_Report.pdf";
-            } else if (metricKey === "net_fund") {
-                title = "Net Total Fund Report";
+                filePrefix = "Available_Cash";
+            } else if (metricType === "fund") {
+                reportHeading = "NET TOTAL FUND BREAKDOWN";
                 summaryLines = [
-                    `Net Total Fund = Savings (Rs. ${totalSavings}) + Interest (Rs. ${totalInterest}) + Net Penalties (Rs. ${totalPenaltiesNet}) = Rs. ${netTotalFund}`
+                    `Formula: Savings (Rs. ${totalSavings}) + Interest (Rs. ${totalInterest}) + Net Penalties (Rs. ${totalPenaltiesNet}) = Rs. ${netTotalFund}`
                 ];
-                headers = ["Fund Source", "Basis", "Amount"];
+                headers = ["Fund Component", "Calculation Basis", "Amount"];
                 bodyRows = [
-                    ["Total Savings", `${totalSavingsCount} paid/advance months`, `Rs. ${totalSavings}`],
-                    ["Interest Earned", "Interest repayments received", `Rs. ${totalInterest}`],
-                    ["Net Penalties", "Penalties/Income minus Expense", `Rs. ${totalPenaltiesNet}`],
-                    ["Net Total Fund", "Combined fund total", `Rs. ${netTotalFund}`]
+                    ["Total Savings", `${totalSavingsCount} credited months`, `Rs. ${totalSavings}`],
+                    ["Interest Earned", "Interest repayments", `Rs. ${totalInterest}`],
+                    ["Net Penalties", "Income minus expense", `Rs. ${totalPenaltiesNet}`],
+                    ["Net Total Fund", "Total group fund", `Rs. ${netTotalFund}`]
                 ];
-                fileName = "Net_Total_Fund_Report.pdf";
+                filePrefix = "Net_Total_Fund";
             } else {
-                alert("Unknown report type.");
+                alert("Invalid report selection: " + metricType);
                 return;
             }
 
             doc.setFontSize(13);
             doc.setTextColor(15, 23, 42);
-            doc.text(title, 14, 52);
+            doc.text(reportHeading, 14, 52);
 
             doc.setFontSize(10);
             doc.setTextColor(51, 65, 85);
-            let yPos = 60;
+            let y = 60;
             summaryLines.forEach(line => {
-                doc.text(line, 14, yPos);
-                yPos += 7;
+                doc.text(line, 14, y);
+                y += 7;
             });
 
             doc.autoTable({
                 head: [headers],
                 body: bodyRows,
-                startY: yPos + 4
+                startY: y + 4
             });
 
-            doc.save(fileName);
-        }
+            savePdfUnique(doc, filePrefix);
+        };
 
         function checkMemberPaidStatus(memberId, targetMonth) {
             let directKey = `${targetMonth}_${memberId}`;
@@ -1135,45 +1156,45 @@
             return `
                 <div class="space-y-6">
                     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-                        <button onclick="downloadDashboardMetricPDF('savings')" class="text-left bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-emerald-500/40 p-5 rounded-2xl shadow-xl transition cursor-pointer group" title="Click to download PDF report">
+                        <button type="button" onclick="window.downloadMetricPDF('savings')" class="text-left bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-emerald-500/40 p-5 rounded-2xl shadow-xl transition cursor-pointer group" title="Download Total Savings PDF">
                             <div class="flex items-center justify-between">
                                 <p class="text-xs text-slate-400 font-medium">Total Savings</p>
                                 <i data-lucide="download" class="w-3.5 h-3.5 text-slate-500 group-hover:text-emerald-400 transition"></i>
                             </div>
                             <h3 class="text-xl font-bold text-emerald-400 mt-1">₹${totalSavings}</h3>
-                            <p class="text-[10px] text-slate-500 mt-1">Click for PDF Report</p>
+                            <p class="text-[10px] text-slate-500 mt-1">Total Savings PDF</p>
                         </button>
-                        <button onclick="downloadDashboardMetricPDF('interest')" class="text-left bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-cyan-500/40 p-5 rounded-2xl shadow-xl transition cursor-pointer group" title="Click to download PDF report">
+                        <button type="button" onclick="window.downloadMetricPDF('interest')" class="text-left bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-cyan-500/40 p-5 rounded-2xl shadow-xl transition cursor-pointer group" title="Download Interest Earned PDF">
                             <div class="flex items-center justify-between">
                                 <p class="text-xs text-slate-400 font-medium">Interest Earned</p>
                                 <i data-lucide="download" class="w-3.5 h-3.5 text-slate-500 group-hover:text-cyan-400 transition"></i>
                             </div>
                             <h3 class="text-xl font-bold text-cyan-400 mt-1">₹${totalInterest}</h3>
-                            <p class="text-[10px] text-slate-500 mt-1">Click for PDF Report</p>
+                            <p class="text-[10px] text-slate-500 mt-1">Interest Earned PDF</p>
                         </button>
-                        <button onclick="downloadDashboardMetricPDF('active_loans')" class="text-left bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-amber-500/40 p-5 rounded-2xl shadow-xl transition cursor-pointer group" title="Click to download PDF report">
+                        <button type="button" onclick="window.downloadMetricPDF('loans')" class="text-left bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-amber-500/40 p-5 rounded-2xl shadow-xl transition cursor-pointer group" title="Download Active Loans Out PDF">
                             <div class="flex items-center justify-between">
                                 <p class="text-xs text-slate-400 font-medium">Active Loans Out</p>
                                 <i data-lucide="download" class="w-3.5 h-3.5 text-slate-500 group-hover:text-amber-400 transition"></i>
                             </div>
                             <h3 class="text-xl font-bold text-amber-400 mt-1">₹${activeLoansTotal}</h3>
-                            <p class="text-[10px] text-slate-500 mt-1">Click for PDF Report</p>
+                            <p class="text-[10px] text-slate-500 mt-1">Active Loans PDF</p>
                         </button>
-                        <button onclick="downloadDashboardMetricPDF('available_cash')" class="text-left bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-green-500/40 p-5 rounded-2xl shadow-xl transition cursor-pointer group" title="Click to download PDF report">
+                        <button type="button" onclick="window.downloadMetricPDF('cash')" class="text-left bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-green-500/40 p-5 rounded-2xl shadow-xl transition cursor-pointer group" title="Download Available Cash PDF">
                             <div class="flex items-center justify-between">
                                 <p class="text-xs text-slate-400 font-medium">Available Cash</p>
                                 <i data-lucide="download" class="w-3.5 h-3.5 text-slate-500 group-hover:text-green-400 transition"></i>
                             </div>
                             <h3 class="text-xl font-bold text-green-400 mt-1">₹${availableCash}</h3>
-                            <p class="text-[10px] text-slate-500 mt-1">Click for PDF Report</p>
+                            <p class="text-[10px] text-slate-500 mt-1">Available Cash PDF</p>
                         </button>
-                        <button onclick="downloadDashboardMetricPDF('net_fund')" class="text-left bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-indigo-500/40 p-5 rounded-2xl shadow-xl transition cursor-pointer group" title="Click to download PDF report">
+                        <button type="button" onclick="window.downloadMetricPDF('fund')" class="text-left bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-indigo-500/40 p-5 rounded-2xl shadow-xl transition cursor-pointer group" title="Download Net Total Fund PDF">
                             <div class="flex items-center justify-between">
                                 <p class="text-xs text-slate-400 font-medium">Net Total Fund</p>
                                 <i data-lucide="download" class="w-3.5 h-3.5 text-slate-500 group-hover:text-indigo-400 transition"></i>
                             </div>
                             <h3 class="text-xl font-bold text-indigo-400 mt-1">₹${netTotalFund}</h3>
-                            <p class="text-[10px] text-slate-500 mt-1">Click for PDF Report</p>
+                            <p class="text-[10px] text-slate-500 mt-1">Net Total Fund PDF</p>
                         </button>
                     </div>
 
@@ -1481,7 +1502,7 @@
                 doc.text("No active or historical loan transactions found.", 14, 82);
             }
 
-            doc.save(`Passbook_${m.name.replace(/\s+/g, '_')}.pdf`);
+            savePdfUnique(doc, `Passbook_${m.name.replace(/\s+/g, '_')}`);
         }
 
         function changeMonth(val) { appData.currentMonth = val; saveAppData(); }
@@ -1959,7 +1980,7 @@
                 body: rows,
                 startY: 78
             });
-            doc.save(`Receipt_${loan.memberName.replace(/\s+/g, '_')}.pdf`);
+            savePdfUnique(doc, `Receipt_${loan.memberName.replace(/\s+/g, '_')}`);
         }
 
         function renderExpensesTab() {
