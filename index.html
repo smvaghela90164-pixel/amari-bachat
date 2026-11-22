@@ -1,3 +1,4 @@
+html
 <!DOCTYPE html>
 <html lang="gu">
 <head>
@@ -124,10 +125,10 @@
             },
             currentMonth: "2026-11",
             members: [
-                { id: 1, name: "Aarav Sharma", age: 28, phone: "9876543210", photo: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150", joinMonth: "2026-01" },
-                { id: 2, name: "Rohan Verma", age: 32, phone: "9876543211", photo: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150", joinMonth: "2026-01" },
-                { id: 3, name: "Amit Patel", age: 25, phone: "9876543212", photo: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150", joinMonth: "2026-02" },
-                { id: 4, name: "Priya Singh", age: 29, phone: "9876543213", photo: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150", joinMonth: "2026-02" }
+                { id: 1, name: "Aarav Sharma", age: 28, phone: "9876543210", pin: "1111", photo: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150", joinMonth: "2026-01" },
+                { id: 2, name: "Rohan Verma", age: 32, phone: "9876543211", pin: "2222", photo: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150", joinMonth: "2026-01" },
+                { id: 3, name: "Amit Patel", age: 25, phone: "9876543212", pin: "3333", photo: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150", joinMonth: "2026-02" },
+                { id: 4, name: "Priya Singh", age: 29, phone: "9876543213", pin: "4444", photo: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150", joinMonth: "2026-02" }
             ],
             savings: {},
             loans: [],
@@ -162,8 +163,9 @@
                 if (typeof l.deleted !== 'boolean') l.deleted = false;
             });
 
-            appData.members.forEach(m => {
+            appData.members.forEach((m, idx) => {
                 if (!m.age) m.age = 30;
+                if (!m.pin) m.pin = String(1111 + idx);
                 if (!m.photo) m.photo = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150";
                 if (!m.joinMonth) m.joinMonth = "2026-01";
             });
@@ -284,18 +286,19 @@
 
                             <div class="relative flex py-1 items-center">
                                 <div class="flex-grow border-t border-slate-700"></div>
-                                <span class="flex-shrink mx-4 text-slate-500 text-xs uppercase">Ya Member View</span>
+                                <span class="flex-shrink mx-4 text-slate-500 text-xs uppercase">Ya Member View (PIN Required)</span>
                                 <div class="flex-grow border-t border-slate-700"></div>
                             </div>
 
                             <div class="bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50">
-                                <h3 class="font-semibold text-emerald-300 mb-3 flex items-center gap-2"><i data-lucide="users" class="w-5 h-5"></i> Member Login</h3>
+                                <h3 class="font-semibold text-emerald-300 mb-3 flex items-center gap-2"><i data-lucide="lock" class="w-5 h-5"></i> Member Login</h3>
                                 <div class="space-y-3">
                                     <select id="selectedMember" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500">
                                         <option value="">Apna Naam Chunein...</option>
                                         ${appData.members.map(m => `<option value="${m.name}">${m.name}</option>`).join('')}
                                     </select>
-                                    <button onclick="handleMemberLogin()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 rounded-xl transition shadow-lg shadow-emerald-600/30">View Member Dashboard</button>
+                                    <input type="password" id="memberPin" maxlength="8" placeholder="Apna Personal PIN Dalein" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500">
+                                    <button onclick="handleMemberLogin()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 rounded-xl transition shadow-lg shadow-emerald-600/30">Verify PIN & View My Account</button>
                                 </div>
                             </div>
                         </div>
@@ -318,8 +321,17 @@
 
         function handleMemberLogin() {
             const name = document.getElementById('selectedMember').value;
+            const pinInput = document.getElementById('memberPin').value.trim();
             if (!name) { alert('Kripya apna naam select karein.'); return; }
-            appData.currentUser = { role: 'member', name: name };
+            if (!pinInput) { alert('Kripya apna personal PIN dalein.'); return; }
+
+            const memberObj = appData.members.find(m => m.name === name);
+            if (!memberObj || String(memberObj.pin || "") !== pinInput) {
+                alert('Galat PIN! Aap sirf apna account hi apne PIN se khol sakte hain.');
+                return;
+            }
+
+            appData.currentUser = { role: 'member', name: memberObj.name, memberId: memberObj.id };
             appData.activeTab = 'dashboard';
             saveSessionOnly();
         }
@@ -340,7 +352,7 @@
                         </div>
                         <div>
                             <h1 class="text-sm md:text-base font-bold text-emerald-300 tracking-wider">અમારી બચત <span class="text-amber-400">|</span> અમારી સુરક્ષા</h1>
-                            <p class="text-[11px] text-slate-400">${isAdmin ? '👑 Admin: ' + appData.adminCreds.displayName : '👤 Member: ' + appData.currentUser.name}</p>
+                            <p class="text-[11px] text-slate-400">${isAdmin ? '👑 Admin: ' + appData.adminCreds.displayName : '🔒 Member: ' + appData.currentUser.name}</p>
                         </div>
                     </div>
 
@@ -1263,7 +1275,7 @@
                     <div class="flex flex-wrap justify-between items-center gap-4">
                         <div>
                             <h2 class="text-xl font-bold text-white">${isAdmin ? 'અમારી બચત | અમારી સુરક્ષા - Members Directory' : 'અમારી બચત | અમારી સુરક્ષા - My Profile & Savings'}</h2>
-                            <p class="text-xs text-slate-400">${isAdmin ? 'Members ki photo, umar, aur savings status yahan manage karein.' : 'Aapki personal savings aur profile details.'}</p>
+                            <p class="text-xs text-slate-400">${isAdmin ? 'Members ki photo, umar, PIN, aur savings status yahan manage karein.' : 'Aapki personal savings aur profile details.'}</p>
                         </div>
                         <div class="flex items-center gap-3">
                             <label class="text-sm text-slate-300">Month:</label>
@@ -1279,6 +1291,7 @@
                                     <th class="p-3">Photo & Name</th>
                                     <th class="p-3">Age</th>
                                     <th class="p-3">Phone</th>
+                                    ${isAdmin ? `<th class="p-3">PIN</th>` : ''}
                                     <th class="p-3">Join Month</th>
                                     <th class="p-3">${appData.currentMonth} Status</th>
                                     <th class="p-3">Total Savings</th>
@@ -1311,6 +1324,7 @@
                                             </td>
                                             <td class="p-3 text-slate-300">${m.age || 'N/A'} yrs</td>
                                             <td class="p-3 text-slate-300">${m.phone}</td>
+                                            ${isAdmin ? `<td class="p-3 font-mono text-amber-300 text-xs">${m.pin || '1234'}</td>` : ''}
                                             <td class="p-3 text-indigo-300 text-xs font-medium">${m.joinMonth || '2026-01'}</td>
                                             <td class="p-3">
                                                 <span class="px-3 py-1 rounded-full text-xs font-semibold ${isPaid ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}">
@@ -1346,7 +1360,7 @@
                             <label class="text-xs text-slate-300 mb-1 block">Full Name</label>
                             <input type="text" id="memberInputName" placeholder="Full Name" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
                         </div>
-                        <div class="grid grid-cols-2 gap-3">
+                        <div class="grid grid-cols-3 gap-3">
                             <div>
                                 <label class="text-xs text-slate-300 mb-1 block">Age (Umar)</label>
                                 <input type="number" id="memberInputAge" placeholder="e.g. 28" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
@@ -1354,6 +1368,10 @@
                             <div>
                                 <label class="text-xs text-slate-300 mb-1 block">Mobile Number</label>
                                 <input type="text" id="memberInputPhone" placeholder="Mobile" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
+                            </div>
+                            <div>
+                                <label class="text-xs text-amber-300 mb-1 block">Login PIN</label>
+                                <input type="text" id="memberInputPin" placeholder="e.g. 1234" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
                             </div>
                         </div>
                         <div>
@@ -1465,6 +1483,7 @@
                 document.getElementById('memberInputName').value = m.name;
                 document.getElementById('memberInputAge').value = m.age || 30;
                 document.getElementById('memberInputPhone').value = m.phone;
+                document.getElementById('memberInputPin').value = m.pin || "1234";
                 document.getElementById('memberInputPhoto').value = m.photo || "";
                 document.getElementById('memberInputJoinMonth').value = m.joinMonth || "2026-01";
                 document.getElementById('memberModalTitle').innerText = "Edit Member Details";
@@ -1473,6 +1492,7 @@
                 document.getElementById('memberInputName').value = "";
                 document.getElementById('memberInputAge').value = "";
                 document.getElementById('memberInputPhone').value = "";
+                document.getElementById('memberInputPin').value = "1234";
                 document.getElementById('memberInputPhoto').value = "";
                 document.getElementById('memberInputJoinMonth').value = appData.currentMonth;
                 document.getElementById('memberModalTitle').innerText = "Add New Member";
@@ -1487,10 +1507,11 @@
             let name = document.getElementById('memberInputName').value.trim();
             let age = parseInt(document.getElementById('memberInputAge').value) || 25;
             let phone = document.getElementById('memberInputPhone').value.trim();
+            let pin = document.getElementById('memberInputPin').value.trim() || "1234";
             let photo = document.getElementById('memberInputPhoto').value.trim() || "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150";
             let joinMonth = document.getElementById('memberInputJoinMonth').value || "2026-01";
             
-            if (!name || !phone) { alert('Naam aur phone number bharein.'); return; }
+            if (!name || !phone || !pin) { alert('Naam, phone number aur PIN bharein.'); return; }
 
             if (id) {
                 let m = appData.members.find(x => x.id === parseInt(id));
@@ -1498,13 +1519,14 @@
                     m.name = name; 
                     m.age = age;
                     m.phone = phone; 
+                    m.pin = pin;
                     m.photo = photo;
                     m.joinMonth = joinMonth; 
                     alert(`Member "${name}" update ho gaya hai!`);
                 }
             } else {
                 let newId = appData.members.length > 0 ? Math.max(...appData.members.map(m => m.id)) + 1 : 1;
-                appData.members.push({ id: newId, name, age, phone, photo, joinMonth });
+                appData.members.push({ id: newId, name, age, phone, pin, photo, joinMonth });
                 alert(`Naya member "${name}" add ho gaya hai!`);
             }
             closeMemberModal();
@@ -1961,39 +1983,47 @@
             let totalProfit = totalInterest + totalPenalties;
             let grandTotal = totalSavings + totalProfit;
 
+            const auditRowsMembers = isAdmin
+                ? appData.members
+                : appData.members.filter(m => m.name === appData.currentUser.name);
+
             return `
                 <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-6 shadow-xl">
                     <div class="flex flex-wrap justify-between items-center gap-4">
                         <div>
-                            <h2 class="text-xl font-bold text-white">અમારી બચત | અમારી સુરક્ષા - Annual Financial Audit</h2>
-                            <p class="text-xs text-slate-400">Naye members ko unke join month ke anusaar hi profit share diya jata hai.</p>
+                            <h2 class="text-xl font-bold text-white">${isAdmin ? 'અમારી બચત | અમારી સુરક્ષા - Annual Financial Audit' : 'અમારી બચત | અમારી સુરક્ષા - My Audit Summary'}</h2>
+                            <p class="text-xs text-slate-400">${isAdmin ? 'Naye members ko unke join month ke anusaar hi profit share diya jata hai.' : 'Yahan sirf aapki personal audit aur profit share detail dikh rahi hai.'}</p>
                         </div>
-                        <button onclick="exportExcelAudit()" class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-medium transition shadow-lg">
-                            <i data-lucide="file-spreadsheet" class="w-4 h-4"></i> Export to Excel (.xlsx)
-                        </button>
+                        ${isAdmin ? `
+                            <button onclick="exportExcelAudit()" class="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-medium transition shadow-lg">
+                                <i data-lucide="file-spreadsheet" class="w-4 h-4"></i> Export to Excel (.xlsx)
+                            </button>
+                        ` : ''}
                     </div>
 
-                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                        <div class="bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50">
-                            <span class="text-slate-400 text-xs block">Total Savings</span>
-                            <span class="text-emerald-400 font-bold text-lg mt-1 block">₹${totalSavings}</span>
+                    ${isAdmin ? `
+                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                            <div class="bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50">
+                                <span class="text-slate-400 text-xs block">Total Savings</span>
+                                <span class="text-emerald-400 font-bold text-lg mt-1 block">₹${totalSavings}</span>
+                            </div>
+                            <div class="bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50">
+                                <span class="text-slate-400 text-xs block">Total Interest Earned</span>
+                                <span class="text-cyan-400 font-bold text-lg mt-1 block">₹${totalInterest}</span>
+                            </div>
+                            <div class="bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50">
+                                <span class="text-slate-400 text-xs block">Net Penalties</span>
+                                <span class="text-indigo-400 font-bold text-lg mt-1 block">₹${totalPenalties}</span>
+                            </div>
+                            <div class="bg-indigo-950/60 p-4 rounded-2xl border border-indigo-500/40">
+                                <span class="text-indigo-300 text-xs block font-semibold">Grand Total Fund</span>
+                                <span class="text-emerald-400 font-bold text-lg mt-1 block">₹${grandTotal}</span>
+                            </div>
                         </div>
-                        <div class="bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50">
-                            <span class="text-slate-400 text-xs block">Total Interest Earned</span>
-                            <span class="text-cyan-400 font-bold text-lg mt-1 block">₹${totalInterest}</span>
-                        </div>
-                        <div class="bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50">
-                            <span class="text-slate-400 text-xs block">Net Penalties</span>
-                            <span class="text-indigo-400 font-bold text-lg mt-1 block">₹${totalPenalties}</span>
-                        </div>
-                        <div class="bg-indigo-950/60 p-4 rounded-2xl border border-indigo-500/40">
-                            <span class="text-indigo-300 text-xs block font-semibold">Grand Total Fund</span>
-                            <span class="text-emerald-400 font-bold text-lg mt-1 block">₹${grandTotal}</span>
-                        </div>
-                    </div>
+                    ` : ''}
 
-                    <div class="pt-4">
-                        <h3 class="text-md font-bold text-white mb-3">Member-wise Active Months & Final Net Worth</h3>
+                    <div class="pt-2">
+                        <h3 class="text-md font-bold text-white mb-3">${isAdmin ? 'Member-wise Active Months & Final Net Worth' : 'Aapki Active Months & Final Net Worth'}</h3>
                         <div class="overflow-x-auto">
                             <table class="w-full text-left border-collapse">
                                <thead>
@@ -2008,7 +2038,7 @@
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-slate-800 text-sm">
-                                    ${appData.members.map((m, idx) => {
+                                    ${auditRowsMembers.map((m, idx) => {
                                         let mMonths = 0;
                                         Object.keys(appData.savings).forEach(k => {
                                             if (k.endsWith(`_${m.id}`)) {
