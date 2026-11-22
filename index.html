@@ -1782,18 +1782,23 @@ html
                     </div>
                 </div>
 
+                <!-- Combined Principal & Interest Repayment Modal -->
                 <div id="repaymentModal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
                     <div class="bg-slate-900 border border-slate-800 p-6 rounded-3xl w-full max-w-md space-y-4 shadow-2xl animate-scale-in">
-                        <h3 class="text-lg font-bold text-white">Add Repayment</h3>
+                        <h3 class="text-lg font-bold text-white">Add Repayment (Principal & Interest)</h3>
+                        <p id="repayLoanMemberLabel" class="text-xs text-indigo-300 font-semibold"></p>
                         <input type="hidden" id="repayLoanId">
-                        <input type="number" id="repayAmount" placeholder="Amount (₹)" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
-                        <select id="repayType" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
-                            <option value="Principal">Principal (मूलधन)</option>
-                            <option value="Interest">Interest (બ्याज)</option>
-                        </select>
+                        <div>
+                            <label class="text-xs text-emerald-300 mb-1 block">Principal Amount (₹) — 0 ya khali chhod sakte hain</label>
+                            <input type="number" id="repayPrincipalAmount" min="0" placeholder="0" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="text-xs text-cyan-300 mb-1 block">Interest Amount (₹) — 0 ya khali chhod sakte hain</label>
+                            <input type="number" id="repayInterestAmount" min="0" placeholder="0" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
+                        </div>
                         <div class="flex justify-end gap-3 pt-2">
                             <button onclick="closeRepaymentModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-sm">Cancel</button>
-                            <button onclick="saveRepayment()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm">Save</button>
+                            <button onclick="saveRepayment()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-medium">Save Repayment</button>
                         </div>
                     </div>
                 </div>
@@ -1847,19 +1852,41 @@ html
 
         function openRepaymentModal(id) { 
             if (appData.currentUser.role !== 'admin') return;
-            document.getElementById('repayLoanId').value = id; 
+            const loan = appData.loans.find(l => l.id === id);
+            document.getElementById('repayLoanId').value = id;
+            document.getElementById('repayLoanMemberLabel').innerText = loan ? `Member: ${loan.memberName} (Loan: ₹${loan.amount})` : "";
+            document.getElementById('repayPrincipalAmount').value = "";
+            document.getElementById('repayInterestAmount').value = "";
             document.getElementById('repaymentModal').classList.remove('hidden'); 
         }
         function closeRepaymentModal() { document.getElementById('repaymentModal').classList.add('hidden'); }
         function saveRepayment() {
-            let loanId = parseInt(document.getElementById('repayLoanId').value);
-            let amount = parseFloat(document.getElementById('repayAmount').value);
-            let type = document.getElementById('repayType').value;
-            if (!amount) { alert('Amount dalein.'); return; }
-            let loan = appData.loans.find(l => l.id === loanId);
+            if (appData.currentUser.role !== 'admin') return;
+            const loanId = parseInt(document.getElementById('repayLoanId').value);
+            const principalRaw = document.getElementById('repayPrincipalAmount').value.trim();
+            const interestRaw = document.getElementById('repayInterestAmount').value.trim();
+            const principalAmt = principalRaw === "" ? 0 : parseFloat(principalRaw);
+            const interestAmt = interestRaw === "" ? 0 : parseFloat(interestRaw);
+
+            if (isNaN(principalAmt) || principalAmt < 0 || isNaN(interestAmt) || interestAmt < 0) {
+                alert('Kripya valid amount dalein (0 ya usse bada).');
+                return;
+            }
+            if (principalAmt <= 0 && interestAmt <= 0) {
+                alert('Principal ya Interest mein se kam se kam ek mein 0 se bada amount dalein.');
+                return;
+            }
+
+            const loan = appData.loans.find(l => l.id === loanId);
             if (loan) {
                 if (!Array.isArray(loan.repayments)) loan.repayments = [];
-                loan.repayments.push({ date: new Date().toISOString().split('T')[0], amount, type });
+                const todayStr = new Date().toISOString().split('T')[0];
+                if (principalAmt > 0) {
+                    loan.repayments.push({ date: todayStr, amount: principalAmt, type: 'Principal' });
+                }
+                if (interestAmt > 0) {
+                    loan.repayments.push({ date: todayStr, amount: interestAmt, type: 'Interest' });
+                }
                 const repaidPrincipal = loan.repayments.reduce((sum, r) => r.type === 'Principal' ? sum + r.amount : sum, 0);
                 if (loan.amount - repaidPrincipal <= 0) loan.status = 'Settled';
             }
