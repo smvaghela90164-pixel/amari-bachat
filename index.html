@@ -110,19 +110,13 @@
             viewMode: "desktop"
         };
         if (!sessionState.viewMode) sessionState.viewMode = "desktop";
+        if (sessionState.activeTab === "deadline") sessionState.activeTab = "dashboard";
 
         const defaultSharedData = {
             adminCreds: { username: "admin", password: "admin123", displayName: "Main Admin", role: "Super Admin" },
             adminBalances: [
                 { id: 1, name: "Main Admin", amount: 0 }
             ],
-            paymentSettings: {
-                upiId: "groupadmin@upi",
-                qrImageUrl: "https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=upi://pay?pa=groupadmin@upi&pn=AmariBachatAmariSuraksha&am=500&cu=INR"
-            },
-            whatsappTemplates: {
-                reminderMsg: "Hello {name},\n'અમારી બચત | અમારી સુરક્ષા' ગ્રુપની {month} ની ₹{amount} સેવિંગ્સ જમા કરવાની છેલ્લી તારીખ ૧૦ તારીખ છે. કૃપા કરીને સમયસર પેમેન્ટ કરો જેથી ₹50 પેનલ્ટીથી બચી શકાય. UPI ID: {upi}\nધન્યવાદ!"
-            },
             currentMonth: "2026-11",
             members: [
                 { id: 1, name: "Aarav Sharma", age: 28, phone: "9876543210", pin: "1111", photo: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150", joinMonth: "2026-01" },
@@ -206,21 +200,29 @@
             return yyyymm;
         }
 
+        function stripIgnoredLegacyFields(obj) {
+            if (!obj || typeof obj !== "object") return {};
+            const copy = { ...obj };
+            delete copy.paymentSettings;
+            delete copy.whatsappTemplates;
+            return copy;
+        }
+
         let localCached = JSON.parse(localStorage.getItem(STORAGE_KEY));
         let appData = {
             ...defaultSharedData,
-            ...(localCached || {}),
+            ...stripIgnoredLegacyFields(localCached),
             currentUser: sessionState.currentUser,
             activeTab: sessionState.activeTab
         };
 
         function normalizeAppData() {
+            delete appData.paymentSettings;
+            delete appData.whatsappTemplates;
             if (!appData.adminCreds) appData.adminCreds = defaultSharedData.adminCreds;
             if (!Array.isArray(appData.adminBalances) || appData.adminBalances.length === 0) {
                 appData.adminBalances = [{ id: 1, name: appData.adminCreds.displayName || "Main Admin", amount: 0 }];
             }
-            if (!appData.paymentSettings) appData.paymentSettings = defaultSharedData.paymentSettings;
-            if (!appData.whatsappTemplates) appData.whatsappTemplates = defaultSharedData.whatsappTemplates;
             if (!appData.currentMonth) appData.currentMonth = "2026-11";
             if (!Array.isArray(appData.members)) appData.members = defaultSharedData.members;
             if (!appData.savings || typeof appData.savings !== 'object') appData.savings = {};
@@ -270,8 +272,6 @@
             return {
                 adminCreds: appData.adminCreds,
                 adminBalances: appData.adminBalances,
-                paymentSettings: appData.paymentSettings,
-                whatsappTemplates: appData.whatsappTemplates,
                 currentMonth: appData.currentMonth,
                 members: appData.members,
                 savings: appData.savings,
@@ -285,7 +285,7 @@
         window.applyCloudData = function(cloudData) {
             appData = {
                 ...defaultSharedData,
-                ...cloudData,
+                ...stripIgnoredLegacyFields(cloudData),
                 currentUser: sessionState.currentUser,
                 activeTab: sessionState.activeTab
             };
@@ -311,6 +311,10 @@
 
         function saveSessionOnly() {
             sessionState.currentUser = appData.currentUser;
+            if (sessionState.activeTab === "deadline") {
+                sessionState.activeTab = "dashboard";
+                appData.activeTab = "dashboard";
+            }
             if (sessionState.activeTab === "activity" && (!appData.currentUser || appData.currentUser.role !== "admin")) {
                 sessionState.activeTab = "dashboard";
                 appData.activeTab = "dashboard";
@@ -336,6 +340,9 @@
             if (!appData.currentUser) {
                 root.innerHTML = renderLoginScreen();
             } else {
+                if (appData.activeTab === "deadline") {
+                    appData.activeTab = "dashboard";
+                }
                 if (appData.activeTab === "activity" && appData.currentUser.role !== "admin") {
                     appData.activeTab = "dashboard";
                     sessionState.activeTab = "dashboard";
@@ -452,8 +459,6 @@
                     <div class="flex flex-wrap gap-2 items-center">
                         <button onclick="setTab('dashboard')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'dashboard' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Dashboard</button>
                         <button onclick="setTab('members')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'members' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">${isAdmin ? 'Members' : 'My Profile'}</button>
-                        <button onclick="setTab('deadline')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'deadline' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">🔔 1-10 Rule</button>
-                        <button onclick="openUpiQrModal()" class="px-3.5 py-2 rounded-xl text-xs font-medium bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600 hover:text-white transition flex items-center gap-1.5"><i data-lucide="qr-code" class="w-4 h-4"></i> UPI QR</button>
                         <button onclick="setTab('loans')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'loans' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Loans</button>
                         <button onclick="setTab('expenses')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'expenses' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Penalties</button>
                         <button onclick="setTab('audit')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'audit' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Audit</button>
@@ -471,7 +476,6 @@
                 <main class="animate-fade-in">
                     ${appData.activeTab === 'dashboard' ? renderDashboard() : ''}
                     ${appData.activeTab === 'members' ? renderMembersTab() : ''}
-                    ${appData.activeTab === 'deadline' ? renderDeadlineTab() : ''}
                     ${appData.activeTab === 'loans' ? renderLoansTab() : ''}
                     ${appData.activeTab === 'expenses' ? renderExpensesTab() : ''}
                     ${appData.activeTab === 'audit' ? renderAuditTab() : ''}
@@ -499,23 +503,6 @@
                     </div>
                 </div>
 
-                <!-- UPI & QR Code Modal -->
-                <div id="upiQrModal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
-                    <div class="bg-slate-900 border border-slate-800 p-6 rounded-3xl w-full max-w-sm space-y-4 text-center shadow-2xl animate-scale-in">
-                        <div class="flex justify-between items-center">
-                            <h3 class="text-base font-bold text-emerald-300 flex items-center gap-2"><i data-lucide="qr-code" class="w-5 h-5 text-emerald-400"></i> અમારી બચત | અમારી સુરક્ષા</h3>
-                            <button onclick="closeUpiQrModal()" class="text-slate-400 hover:text-white text-lg">✕</button>
-                        </div>
-                        <div class="bg-white p-3 rounded-2xl inline-block shadow-inner">
-                            <img src="${escapeAttr(appData.paymentSettings.qrImageUrl)}" alt="Payment QR Code" class="w-48 h-48 mx-auto object-contain">
-                        </div>
-                        <div class="bg-slate-800/80 p-3 rounded-xl border border-slate-700/50">
-                            <p class="text-xs text-slate-400 mb-1">Official UPI ID:</p>
-                            <p class="text-sm font-bold text-emerald-400 font-mono select-all">${escapeAttr(appData.paymentSettings.upiId)}</p>
-                        </div>
-                    </div>
-                </div>
-
                 <!-- Admin Settings Modal -->
                 <div id="settingsModal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in overflow-y-auto">
                     <div class="bg-slate-900 border border-slate-800 p-6 rounded-3xl w-full max-w-lg space-y-4 shadow-2xl animate-scale-in my-8">
@@ -537,10 +524,6 @@
                                     <label class="text-xs text-slate-300 mb-1 block">Password</label>
                                     <input type="password" id="newAdminPass" value="${escapeAttr(appData.adminCreds.password)}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
                                 </div>
-                            </div>
-                            <div>
-                                <label class="text-xs text-slate-300 mb-1 block">UPI ID</label>
-                                <input type="text" id="newUpiId" value="${escapeAttr(appData.paymentSettings.upiId)}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
                             </div>
 
                             <div class="border-t border-slate-800 pt-3 mt-3">
@@ -575,9 +558,10 @@
             `;
         }
 
-        function setTab(tab) { appData.activeTab = tab; saveSessionOnly(); }
-        function openUpiQrModal() { document.getElementById('upiQrModal').classList.remove('hidden'); }
-        function closeUpiQrModal() { document.getElementById('upiQrModal').classList.add('hidden'); }
+        function setTab(tab) {
+            appData.activeTab = tab === "deadline" ? "dashboard" : tab;
+            saveSessionOnly();
+        }
         function openSettingsModal() { document.getElementById('settingsModal').classList.remove('hidden'); }
         function closeSettingsModal() { document.getElementById('settingsModal').classList.add('hidden'); }
 
@@ -793,15 +777,13 @@
             let newName = document.getElementById('newAdminName').value.trim();
             let newU = document.getElementById('newAdminUser').value.trim();
             let newP = document.getElementById('newAdminPass').value.trim();
-            let newUpi = document.getElementById('newUpiId').value.trim();
 
             if (!newU || !newP || !newName) { alert('Sabhi fields bharein.'); return; }
             appData.adminCreds.displayName = newName;
             appData.adminCreds.username = newU;
             appData.adminCreds.password = newP;
-            if (newUpi) appData.paymentSettings.upiId = newUpi;
 
-            recordActivityLog("Settings", `Updated Admin Settings (Name: ${newName}, Username: ${newU}, UPI: ${appData.paymentSettings.upiId})`);
+            recordActivityLog("Settings", `Updated Admin Settings (Name: ${newName}, Username: ${newU})`);
             alert('Settings updated & synced to cloud!');
             closeSettingsModal();
             saveAppData();
@@ -834,7 +816,7 @@
                         if (confirm('Kya aap sach mein yeh data restore karna chahte hain? Sabhi devices par yeh naya data update ho jayega.')) {
                             appData = {
                                 ...defaultSharedData,
-                                ...importedData,
+                                ...stripIgnoredLegacyFields(importedData),
                                 currentUser: sessionState.currentUser,
                                 activeTab: sessionState.activeTab
                             };
@@ -1132,152 +1114,6 @@
             saveAppData();
         }
 
-        function formatCustomWhatsAppMessage(memberName) {
-            let tpl = appData.whatsappTemplates.reminderMsg;
-            return tpl.replace(/{name}/g, memberName)
-                      .replace(/{month}/g, formatMonthMMYYYY(appData.currentMonth))
-                      .replace(/{amount}/g, "500")
-                      .replace(/{upi}/g, appData.paymentSettings.upiId);
-        }
-
-        function renderDeadlineTab() {
-            let today = new Date();
-            let dateNum = today.getDate();
-            let statusBadge = "";
-            if (dateNum <= 4) statusBadge = `<span class="px-3 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-xs font-semibold">Phase 1: Payment Open (1-4)</span>`;
-            else if (dateNum >= 5 && dateNum <= 10) statusBadge = `<span class="px-3 py-1 bg-amber-500/10 text-amber-400 border border-amber-500/20 rounded-full text-xs font-semibold">Phase 2: Auto Notification (5-10)</span>`;
-            else statusBadge = `<span class="px-3 py-1 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded-full text-xs font-semibold">Phase 3: Late Penalty Active (>10th)</span>`;
-
-            const isAdmin = appData.currentUser.role === 'admin';
-            const memberName = isAdmin ? null : appData.currentUser.name;
-
-            return `
-                <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-6 shadow-xl">
-                    <div class="flex flex-wrap justify-between items-center gap-4">
-                        <div>
-                            <h2 class="text-xl font-bold text-white">અમારી બચત | અમારી સુરક્ષા - 1-10 Rule & Bulk Messaging</h2>
-                            <p class="text-xs text-slate-400">Sabhi members ko ek sath ya manually WhatsApp message bhejein.</p>
-                        </div>
-                        <div>${statusBadge}</div>
-                    </div>
-
-                    ${isAdmin ? `
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            <div class="bg-slate-800/40 border border-slate-700/50 p-5 rounded-2xl space-y-2">
-                                <div class="text-indigo-400 font-bold text-sm">Step 1: Bulk Reminders</div>
-                                <p class="text-xs text-slate-300">Sabhi pending members ko ek click me reminder bhejein.</p>
-                                <button onclick="sendBulkWhatsAppReminders()" class="mt-2 w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2 rounded-xl text-xs font-medium transition shadow-lg">📲 Send All Selected Reminders</button>
-                            </div>
-                            <div class="bg-slate-800/40 border border-slate-700/50 p-5 rounded-2xl space-y-2">
-                                <div class="text-amber-400 font-bold text-sm">Step 2: Custom Broadcast</div>
-                                <p class="text-xs text-slate-300">Apna khud ka custom message sabhi ko bhejein.</p>
-                                <input type="text" id="customBroadcastText" placeholder="Custom message..." class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none mb-1">
-                                <button onclick="sendCustomBroadcast()" class="w-full bg-amber-600 hover:bg-amber-500 text-white py-1.5 rounded-xl text-xs font-medium transition">📢 Broadcast to Selected</button>
-                            </div>
-                            <div class="bg-slate-800/40 border border-slate-700/50 p-5 rounded-2xl space-y-2">
-                                <div class="text-rose-400 font-bold text-sm">Step 3: Penalty Management</div>
-                                <p class="text-xs text-slate-300">10 taarik ke baad ₹50 fine automatic apply karein.</p>
-                                <button onclick="autoApplyLatePenalties()" class="mt-2 w-full bg-rose-600 hover:bg-rose-500 text-white py-2 rounded-xl text-xs font-medium transition shadow-lg">⚡ Apply ₹50 Penalty Now</button>
-                            </div>
-                        </div>
-                    ` : ''}
-
-                    <div>
-                        <div class="flex justify-between items-center mb-3">
-                            <h3 class="text-md font-bold text-white">${isAdmin ? `Members List & Selection for Messaging (${formatMonthMMYYYY(appData.currentMonth)})` : `Aapki Payment Status (${formatMonthMMYYYY(appData.currentMonth)})`}</h3>
-                            ${isAdmin ? `
-                                <div class="flex gap-2">
-                                    <button onclick="toggleSelectAll(true)" class="px-3 py-1 bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 rounded-lg text-xs hover:bg-indigo-600 hover:text-white transition">Select All</button>
-                                    <button onclick="toggleSelectAll(false)" class="px-3 py-1 bg-slate-800 text-slate-300 rounded-lg text-xs hover:bg-slate-700 transition">Deselect All</button>
-                                </div>
-                            ` : ''}
-                        </div>
-                        <div class="overflow-x-auto">
-                            <table class="w-full text-left border-collapse">
-                                <thead>
-                                    <tr class="border-b border-slate-800 text-slate-400 text-xs uppercase">
-                                        ${isAdmin ? `<th class="p-3 w-10">Select</th>` : ''}
-                                        <th class="p-3">Member Name</th>
-                                        <th class="p-3">Phone</th>
-                                        <th class="p-3">Status</th>
-                                        ${isAdmin ? `<th class="p-3 text-right">Action</th>` : ''}
-                                    </tr>
-                                </thead>
-                                <tbody class="divide-y divide-slate-800 text-sm">
-                                    ${appData.members.filter(m => isAdmin || m.name === memberName).map(m => {
-                                        let res = checkMemberPaidStatus(m.id, appData.currentMonth);
-                                        let statusBadgeHtml = res.status ? `<span class="px-2.5 py-1 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-xs font-semibold">PAID</span>` : `<span class="px-2.5 py-1 bg-rose-500/10 text-rose-400 border border-rose-500/20 rounded-full text-xs font-semibold">PENDING</span>`;
-                                        let customMsg = formatCustomWhatsAppMessage(m.name);
-                                        let waLink = `https://wa.me/91${m.phone}?text=${encodeURIComponent(customMsg)}`;
-                                        let safePhoto = escapeAttr(sanitizePhotoUrl(m.photo));
-
-                                        return `
-                                            <tr class="hover:bg-slate-800/40 transition">
-                                                ${isAdmin ? `<td class="p-3"><input type="checkbox" data-member-id="${m.id}" class="member-checkbox w-4 h-4 rounded bg-slate-900 border-slate-700 text-emerald-600 focus:ring-0 cursor-pointer" checked></td>` : ''}
-                                                <td class="p-3 font-semibold text-white flex items-center gap-2">
-                                                    <img src="${safePhoto}" alt="" style="width:32px;height:32px;min-width:32px;min-height:32px;object-fit:cover;border-radius:9999px;" class="w-8 h-8 rounded-full object-cover border border-slate-700 shrink-0">
-                                                    <span>${escapeAttr(m.name)}</span>
-                                                </td>
-                                                <td class="p-3 text-slate-300">${escapeAttr(m.phone)}</td>
-                                                <td class="p-3">${statusBadgeHtml}</td>
-                                                ${isAdmin ? `
-                                                    <td class="p-3 text-right space-x-2">
-                                                        <a href="${waLink}" target="_blank" class="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600 hover:text-white rounded-lg text-xs font-medium transition">WhatsApp</a>
-                                                        <button onclick="toggleSavings(${m.id})" class="px-3 py-1.5 bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600 hover:text-white rounded-lg text-xs font-medium transition">Mark Paid</button>
-                                                    </td>
-                                                ` : ''}
-                                            </tr>
-                                        `;
-                                    }).join('')}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-
-        function toggleSelectAll(status) {
-            document.querySelectorAll('.member-checkbox').forEach(cb => cb.checked = status);
-        }
-
-        function sendBulkWhatsAppReminders() {
-            let selectedCheckboxes = document.querySelectorAll('.member-checkbox:checked');
-            if (selectedCheckboxes.length === 0) { alert('Kripya kam se kam ek member select karein!'); return; }
-
-            let count = 0;
-            selectedCheckboxes.forEach(cb => {
-                let mId = parseInt(cb.getAttribute('data-member-id'));
-                let m = appData.members.find(x => x.id === mId);
-                if (m) {
-                    let msg = formatCustomWhatsAppMessage(m.name);
-                    window.open(`https://wa.me/91${m.phone}?text=${encodeURIComponent(msg)}`, '_blank');
-                    count++;
-                }
-            });
-            alert(`${count} selected members ke WhatsApp reminder links open kar diye gaye hain!`);
-        }
-
-        function sendCustomBroadcast() {
-            let customText = document.getElementById('customBroadcastText').value.trim();
-            if (!customText) { alert('Pehle custom message type karein!'); return; }
-
-            let selectedCheckboxes = document.querySelectorAll('.member-checkbox:checked');
-            if (selectedCheckboxes.length === 0) { alert('Kripya kam se kam ek member select karein!'); return; }
-
-            let count = 0;
-            selectedCheckboxes.forEach(cb => {
-                let mId = parseInt(cb.getAttribute('data-member-id'));
-                let m = appData.members.find(x => x.id === mId);
-                if (m) {
-                    let finalMsg = `Hello ${m.name},\n${customText}\n- 'અમારી બચત | અમારી સુરક્ષા' Admin`;
-                    window.open(`https://wa.me/91${m.phone}?text=${encodeURIComponent(finalMsg)}`, '_blank');
-                    count++;
-                }
-            });
-            alert(`${count} selected members ko custom broadcast message bhej diya gaya hai!`);
-        }
-
         function renderDashboard() {
             const isAdmin = appData.currentUser.role === 'admin';
             const memberName = isAdmin ? null : appData.currentUser.name;
@@ -1334,18 +1170,13 @@
                             <div class="flex items-center justify-between bg-slate-800/40 p-4 rounded-xl border border-slate-700/50">
                                 <div>
                                     <p class="text-sm font-semibold text-white">Mahine ki Savings (₹500)</p>
-                                    <p class="text-xs text-slate-400">1 se 10 taarik ke beech jama karna anivarya hai.</p>
+                                    <p class="text-xs text-slate-400">Apni monthly savings status yahan check karein.</p>
                                 </div>
                                 <div>
                                     <span class="px-3 py-1.5 rounded-full text-xs font-semibold ${currentMonthStatus.status ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}">
                                         ${currentMonthStatus.status ? 'PAID ✅' : 'PENDING ⚠️'}
                                     </span>
                                 </div>
-                            </div>
-                            <div class="flex gap-3">
-                                <button onclick="openUpiQrModal()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-xl text-xs font-medium transition shadow-lg flex items-center gap-2">
-                                    <i data-lucide="qr-code" class="w-4 h-4"></i> Scan UPI QR to Pay
-                                </button>
                             </div>
                         </div>
                     </div>
@@ -1489,9 +1320,6 @@
                         </div>
                         <div class="flex flex-col justify-center space-y-3">
                             <h4 class="text-sm font-bold text-indigo-300">Quick Actions</h4>
-                            <button onclick="openUpiQrModal()" class="flex items-center gap-2 bg-emerald-600/20 text-emerald-300 border border-emerald-500/30 hover:bg-emerald-600 hover:text-white px-4 py-2.5 rounded-xl text-xs font-medium transition">
-                                <i data-lucide="qr-code" class="w-4 h-4"></i> View / Scan Group UPI QR Code
-                            </button>
                             <button onclick="autoApplyLatePenalties()" class="flex items-center gap-2 bg-rose-600/20 text-rose-300 border border-rose-500/30 hover:bg-rose-600 hover:text-white px-4 py-2.5 rounded-xl text-xs font-medium transition">
                                 <i data-lucide="alert-circle" class="w-4 h-4"></i> Auto-Apply ₹50 Late Penalty for Unpaid Dues
                             </button>
