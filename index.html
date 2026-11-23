@@ -99,7 +99,7 @@
     </script>
 
     <script>
-        const STORAGE_KEY = "amari_bachat_suraksha_v33";
+        const STORAGE_KEY = "amari_bachat_suraksha_v34";
         const SESSION_KEY = "amari_bachat_session_v1";
         const DEFAULT_MEMBER_PHOTO = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150";
 
@@ -136,6 +136,7 @@
         };
 
         let pendingMemberPhotoDataUrl = DEFAULT_MEMBER_PHOTO;
+        let activeRepaymentHistoryLoanId = null;
 
         function sanitizePhotoUrl(rawUrl) {
             if (!rawUrl || typeof rawUrl !== "string") return DEFAULT_MEMBER_PHOTO;
@@ -189,6 +190,9 @@
 
             appData.loans.forEach(l => {
                 if (!Array.isArray(l.repayments)) l.repayments = [];
+                l.repayments.forEach((r, idx) => {
+                    if (!r.id) r.id = (l.id || Date.now()) + "_" + idx + "_" + Math.floor(Math.random() * 1000);
+                });
                 if (typeof l.deleted !== 'boolean') l.deleted = false;
             });
 
@@ -243,6 +247,12 @@
             normalizeAppData();
             localStorage.setItem(STORAGE_KEY, JSON.stringify(getSharedPayload()));
             render();
+            if (activeRepaymentHistoryLoanId !== null) {
+                const modal = document.getElementById("repaymentHistoryModal");
+                if (modal && !modal.classList.contains("hidden")) {
+                    renderRepaymentHistoryBody(activeRepaymentHistoryLoanId);
+                }
+            }
         };
 
         window.pushInitialDataToCloud = function() {
@@ -1517,16 +1527,26 @@
             let m = appData.members.find(x => x.id === memberId);
             if (!m) return;
 
+            let savingsHistoryRows = [];
             let memberTotalPaidMonths = 0;
-            Object.keys(appData.savings).forEach(k => {
+            Object.keys(appData.savings || {}).sort().forEach(k => {
                 if (k.endsWith(`_${m.id}`)) {
+                    let parts = String(k).split("_");
+                    parts.pop();
+                    let formattedMonth = formatMonthMMYYYY(parts.join("_"));
                     let val = appData.savings[k];
-                    if (val === true) memberTotalPaidMonths++;
-                    else if (typeof val === 'object' && val.paid) {
-                        memberTotalPaidMonths += (1 + (val.advanceMonths || 0));
+                    if (val === true) {
+                        memberTotalPaidMonths += 1;
+                        savingsHistoryRows.push([formattedMonth, "Paid (1 Month)", "Rs. 500"]);
+                    } else if (val && typeof val === 'object' && val.paid) {
+                        let adv = parseInt(val.advanceMonths, 10) || 0;
+                        let credited = 1 + adv;
+                        memberTotalPaidMonths += credited;
+                        savingsHistoryRows.push([formattedMonth, `Paid + ${adv} Adv (${credited}M)`, `Rs. ${credited * 500}`]);
                     }
                 }
             });
+
             let totalSavings = memberTotalPaidMonths * 500;
             let mLoans = appData.loans.filter(l => l.memberName === m.name);
 
@@ -1540,27 +1560,38 @@
 
             doc.setTextColor(50, 50, 50);
             doc.setFontSize(11);
-            doc.text(`Member Name: ${m.name} (Age: ${m.age} yrs)`, 14, 45);
-            doc.text(`Phone Number: ${m.phone}`, 14, 53);
-            doc.text(`Join Month: ${formatMonthMMYYYY(m.joinMonth || '2026-01')}`, 14, 61);
-            doc.text(`Total Personal Savings Accumulated: Rs. ${totalSavings}`, 14, 69);
+            doc.text(`Member Name: ${m.name} (Age: ${m.age} yrs)`, 14, 44);
+            doc.text(`Phone Number: ${m.phone}`, 14, 51);
+            doc.text(`Join Month: ${formatMonthMMYYYY(m.joinMonth || '2026-01')}`, 14, 58);
+            doc.text(`Total Personal Savings Accumulated: Rs. ${totalSavings} (${memberTotalPaidMonths} Months)`, 14, 65);
+
+            doc.setFontSize(12);
+            doc.setTextColor(15, 23, 42);
+            doc.text("Savings History", 14, 75);
+
+            doc.autoTable({
+                head: [['Month (MM-YYYY)', 'Status', 'Amount']],
+                body: savingsHistoryRows.length > 0 ? savingsHistoryRows : [['-', 'No savings records', 'Rs. 0']],
+                startY: 79
+            });
+
+            let afterSavingsY = (doc.lastAutoTable && doc.lastAutoTable.finalY) ? doc.lastAutoTable.finalY + 10 : 105;
+            doc.setFontSize(12);
+            doc.setTextColor(15, 23, 42);
+            doc.text("Loan Repayment History", 14, afterSavingsY);
 
             let loanRows = [];
             mLoans.forEach(l => {
                 (l.repayments || []).forEach(r => {
-                    loanRows.push([r.date, `Rs. ${l.amount}`, `Rs. ${r.amount}`, r.type]);
+                    loanRows.push([r.date || '-', `Loan #${l.id} (Rs. ${l.amount})`, r.type || '-', `Rs. ${r.amount}`]);
                 });
             });
 
-            if (loanRows.length > 0) {
-                doc.autoTable({
-                    head: [['Date', 'Original Loan', 'Amount Repaid', 'Repayment Type']],
-                    body: loanRows,
-                    startY: 78
-                });
-            } else {
-                doc.text("No active or historical loan transactions found.", 14, 82);
-            }
+            doc.autoTable({
+                head: [['Date', 'Loan Reference', 'Type', 'Amount Paid']],
+                body: loanRows.length > 0 ? loanRows : [['-', '-', 'No loan repayments', 'Rs. 0']],
+                startY: afterSavingsY + 4
+            });
 
             savePdfUnique(doc, `Passbook_${m.name.replace(/\s+/g, '_')}`);
         }
@@ -1686,6 +1717,90 @@
             }
         }
 
+        function openRepaymentHistoryModal(loanId) {
+            const loan = appData.loans.find(l => l.id === loanId);
+            if (!loan) return;
+            activeRepaymentHistoryLoanId = loanId;
+            renderRepaymentHistoryBody(loanId);
+            document.getElementById('repaymentHistoryModal').classList.remove('hidden');
+            lucide.createIcons();
+        }
+
+        function closeRepaymentHistoryModal() {
+            activeRepaymentHistoryLoanId = null;
+            document.getElementById('repaymentHistoryModal').classList.add('hidden');
+        }
+
+        function renderRepaymentHistoryBody(loanId) {
+            const loan = appData.loans.find(l => l.id === loanId);
+            const titleEl = document.getElementById('repaymentHistoryTitle');
+            const summaryEl = document.getElementById('repaymentHistorySummary');
+            const tbodyEl = document.getElementById('repaymentHistoryTbody');
+            if (!loan || !titleEl || !summaryEl || !tbodyEl) return;
+
+            const isAdmin = appData.currentUser && appData.currentUser.role === 'admin';
+            const reps = Array.isArray(loan.repayments) ? loan.repayments : [];
+            const totalPrincipal = reps.reduce((s, r) => r.type === 'Principal' ? s + (parseFloat(r.amount) || 0) : s, 0);
+            const totalInterest = reps.reduce((s, r) => r.type === 'Interest' ? s + (parseFloat(r.amount) || 0) : s, 0);
+            const balanceDue = (parseFloat(loan.amount) || 0) - totalPrincipal;
+
+            titleEl.innerText = `Repayment History — ${loan.memberName} (Loan: ₹${loan.amount})`;
+            summaryEl.innerHTML = `
+                <span class="px-3 py-1 rounded-xl bg-emerald-950/70 border border-emerald-500/30 text-emerald-300 text-xs font-semibold">Principal Paid: ₹${totalPrincipal}</span>
+                <span class="px-3 py-1 rounded-xl bg-cyan-950/70 border border-cyan-500/30 text-cyan-300 text-xs font-semibold">Interest Paid: ₹${totalInterest}</span>
+                <span class="px-3 py-1 rounded-xl bg-amber-950/70 border border-amber-500/30 text-amber-300 text-xs font-semibold">Balance Due: ₹${balanceDue}</span>
+            `;
+
+            if (reps.length === 0) {
+                tbodyEl.innerHTML = `<tr><td colspan="${isAdmin ? 4 : 3}" class="p-4 text-center text-slate-400 italic">Is loan par abhi koi repayment entry nahi hai.</td></tr>`;
+                return;
+            }
+
+            tbodyEl.innerHTML = reps.map((r, idx) => `
+                <tr class="hover:bg-slate-800/40 transition">
+                    <td class="p-3 text-slate-300">${escapeAttr(r.date || '-')}</td>
+                    <td class="p-3">
+                        <span class="px-2.5 py-1 rounded-full text-xs font-semibold ${r.type === 'Principal' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-cyan-500/10 text-cyan-400'}">
+                            ${escapeAttr(r.type || 'Repayment')}
+                        </span>
+                    </td>
+                    <td class="p-3 font-bold text-white">₹${r.amount}</td>
+                    ${isAdmin ? `
+                        <td class="p-3 text-right">
+                            <button onclick="deleteRepaymentEntry(${loan.id}, '${escapeAttr(r.id || idx)}')" class="px-2.5 py-1 bg-rose-600/20 text-rose-400 hover:bg-rose-600 hover:text-white rounded-lg text-xs font-medium transition inline-flex items-center gap-1">
+                                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Delete
+                            </button>
+                        </td>
+                    ` : ''}
+                </tr>
+            `).join('');
+            lucide.createIcons();
+        }
+
+        function deleteRepaymentEntry(loanId, repIdOrIndex) {
+            if (appData.currentUser.role !== 'admin') return;
+            const loan = appData.loans.find(l => l.id === loanId);
+            if (!loan || !Array.isArray(loan.repayments)) return;
+
+            if (!confirm('Kya aap is repayment entry ko delete karna chahte hain?')) return;
+
+            const idxById = loan.repayments.findIndex(r => String(r.id) === String(repIdOrIndex));
+            if (idxById !== -1) {
+                loan.repayments.splice(idxById, 1);
+            } else {
+                const parsedIdx = parseInt(repIdOrIndex, 10);
+                if (!isNaN(parsedIdx) && parsedIdx >= 0 && parsedIdx < loan.repayments.length) {
+                    loan.repayments.splice(parsedIdx, 1);
+                }
+            }
+
+            const repaidPrincipal = loan.repayments.reduce((sum, r) => r.type === 'Principal' ? sum + (parseFloat(r.amount) || 0) : sum, 0);
+            loan.status = ((parseFloat(loan.amount) || 0) - repaidPrincipal) <= 0 ? 'Settled' : 'Active';
+
+            saveAppData();
+            renderRepaymentHistoryBody(loanId);
+        }
+
         function openEditLoanModal(id) {
             if (appData.currentUser.role !== 'admin') return;
             const loan = appData.loans.find(l => l.id === id);
@@ -1728,10 +1843,10 @@
             const updatedRepayments = [...otherRepayments];
 
             if (targetPrincipal > 0) {
-                updatedRepayments.push({ date: todayStr, amount: targetPrincipal, type: 'Principal' });
+                updatedRepayments.push({ id: `${Date.now()}_p`, date: todayStr, amount: targetPrincipal, type: 'Principal' });
             }
             if (targetInterest > 0) {
-                updatedRepayments.push({ date: todayStr, amount: targetInterest, type: 'Interest' });
+                updatedRepayments.push({ id: `${Date.now()}_i`, date: todayStr, amount: targetInterest, type: 'Interest' });
             }
 
             loan.amount = amount;
@@ -1756,7 +1871,7 @@
                         <div class="flex flex-wrap justify-between items-center gap-4">
                             <div>
                                 <h2 class="text-xl font-bold text-white">${isAdmin ? 'અમારી બચત | અમારી સુરક્ષા - Loan Ledger' : 'અમારી બચત | અમારી સુરક્ષા - My Loans'}</h2>
-                                <p class="text-xs text-slate-400">${isAdmin ? 'Active loan row par click karke Principal aur Interest ko edit karein.' : 'Aapke active ya closed loans.'}</p>
+                                <p class="text-xs text-slate-400">${isAdmin ? 'Active loan row par click karke Principal aur Interest ko edit karein ya Repayments se entries manage karein.' : 'Aapke active ya closed loans.'}</p>
                             </div>
                             ${isAdmin ? `<button onclick="openLoanModal()" class="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition"><i data-lucide="plus-circle" class="w-4 h-4"></i> Issue New Loan</button>` : ''}
                         </div>
@@ -1797,6 +1912,9 @@
                                                     </span>
                                                 </td>
                                                 <td onclick="event.stopPropagation()" class="p-3 text-right space-x-2">
+                                                    <button onclick="openRepaymentHistoryModal(${l.id})" class="px-2.5 py-1.5 bg-cyan-600/20 text-cyan-300 hover:bg-cyan-600 hover:text-white rounded-lg text-xs font-medium transition inline-flex items-center gap-1" title="View / Delete Repayments">
+                                                        <i data-lucide="history" class="w-3.5 h-3.5"></i> Repayments (${(l.repayments || []).length})
+                                                    </button>
                                                     ${isAdmin && status === 'Active' ? `
                                                         <button onclick="openEditLoanModal(${l.id})" class="px-2.5 py-1.5 bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white rounded-lg text-xs font-medium transition">Edit</button>
                                                         <button onclick="openRepaymentModal(${l.id})" class="px-3 py-1.5 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600 hover:text-white rounded-lg text-xs font-medium transition">Add Repayment</button>
@@ -1833,7 +1951,7 @@
                                         <th class="p-3">Principal Repaid</th>
                                         <th class="p-3">Interest Repaid</th>
                                         <th class="p-3">Deleted Date</th>
-                                        <th class="p-3 text-right">Receipt</th>
+                                        <th class="p-3 text-right">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-slate-800 text-sm">
@@ -1851,7 +1969,8 @@
                                                 <td class="p-3 text-emerald-400 font-medium">₹${repaidPrincipal}</td>
                                                 <td class="p-3 text-cyan-400 font-medium">₹${repaidInterest}</td>
                                                 <td class="p-3 text-rose-300 text-xs">${l.deletedAt || l.date}</td>
-                                                <td class="p-3 text-right">
+                                                <td class="p-3 text-right space-x-2">
+                                                    <button onclick="openRepaymentHistoryModal(${l.id})" class="px-2.5 py-1.5 bg-cyan-600/20 text-cyan-300 hover:bg-cyan-600 hover:text-white rounded-lg text-xs font-medium transition" title="View Repayments">Repayments</button>
                                                     <button onclick="downloadPDFReceipt(${l.id})" class="px-2.5 py-1.5 bg-purple-600/20 text-purple-400 hover:bg-purple-600 hover:text-white rounded-lg text-xs font-medium transition" title="Receipt"><i data-lucide="file-text" class="w-3.5 h-3.5"></i></button>
                                                 </td>
                                             </tr>
@@ -1859,6 +1978,33 @@
                                     }).join('')}
                                 </tbody>
                             </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Loan Repayment History View & Delete Modal -->
+                <div id="repaymentHistoryModal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
+                    <div class="bg-slate-900 border border-slate-800 p-6 rounded-3xl w-full max-w-2xl space-y-4 shadow-2xl animate-scale-in">
+                        <div class="flex justify-between items-center gap-3">
+                            <h3 id="repaymentHistoryTitle" class="text-lg font-bold text-white">Repayment History</h3>
+                            <button onclick="closeRepaymentHistoryModal()" class="text-slate-400 hover:text-white text-lg">✕</button>
+                        </div>
+                        <div id="repaymentHistorySummary" class="flex flex-wrap gap-2"></div>
+                        <div class="overflow-x-auto max-h-80 overflow-y-auto border border-slate-800 rounded-2xl">
+                            <table class="w-full text-left border-collapse">
+                                <thead>
+                                    <tr class="border-b border-slate-800 text-slate-400 text-xs uppercase bg-slate-950/60">
+                                        <th class="p-3">Date</th>
+                                        <th class="p-3">Type</th>
+                                        <th class="p-3">Amount</th>
+                                        ${isAdmin ? `<th class="p-3 text-right">Action</th>` : ''}
+                                    </tr>
+                                </thead>
+                                <tbody id="repaymentHistoryTbody" class="divide-y divide-slate-800 text-sm"></tbody>
+                            </table>
+                        </div>
+                        <div class="flex justify-end pt-1">
+                            <button onclick="closeRepaymentHistoryModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-sm">Close</button>
                         </div>
                     </div>
                 </div>
@@ -2013,11 +2159,12 @@
             if (loan) {
                 if (!Array.isArray(loan.repayments)) loan.repayments = [];
                 const todayStr = new Date().toISOString().split('T')[0];
+                const stampBase = Date.now();
                 if (principalAmt > 0) {
-                    loan.repayments.push({ date: todayStr, amount: principalAmt, type: 'Principal' });
+                    loan.repayments.push({ id: `${stampBase}_p`, date: todayStr, amount: principalAmt, type: 'Principal' });
                 }
                 if (interestAmt > 0) {
-                    loan.repayments.push({ date: todayStr, amount: interestAmt, type: 'Interest' });
+                    loan.repayments.push({ id: `${stampBase}_i`, date: todayStr, amount: interestAmt, type: 'Interest' });
                 }
                 const repaidPrincipal = loan.repayments.reduce((sum, r) => r.type === 'Principal' ? sum + r.amount : sum, 0);
                 if (loan.amount - repaidPrincipal <= 0) loan.status = 'Settled';
@@ -2058,14 +2205,33 @@
             const memberName = isAdmin ? null : appData.currentUser.name;
             const expensesList = isAdmin ? appData.expenses : appData.expenses.filter(e => e.title.includes(memberName));
 
+            const totalIncome = expensesList.reduce((s, e) => e.type === 'Income' ? s + (parseFloat(e.amount) || 0) : s, 0);
+            const totalExpense = expensesList.reduce((s, e) => e.type === 'Expense' ? s + (parseFloat(e.amount) || 0) : s, 0);
+            const netBalance = totalIncome - totalExpense;
+
             return `
                 <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-6 shadow-xl">
                     <div class="flex flex-wrap justify-between items-center gap-4">
                         <div>
                             <h2 class="text-xl font-bold text-white">${isAdmin ? 'અમારી બચત | અમારી સુરક્ષા - Penalties' : 'અમારી બચત | અમારી સુરક્ષા - My Penalties'}</h2>
-                            <p class="text-xs text-slate-400">${isAdmin ? 'Jurmana ya extra income/expense add ya edit/modify karein.' : 'Aap par lagi hui late penalties ya charges.'}</p>
+                            <p class="text-xs text-slate-400">${isAdmin ? 'Jurmana ya extra income/expense add, edit ya delete karein.' : 'Aap par lagi hui late penalties ya charges.'}</p>
                         </div>
                         ${isAdmin ? `<button onclick="openExpenseModal()" class="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition"><i data-lucide="plus-circle" class="w-4 h-4"></i> Add Transaction</button>` : ''}
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <div class="bg-slate-800/40 border border-slate-700/50 p-4 rounded-2xl">
+                            <span class="text-xs text-slate-400 block">Total Penalty Income</span>
+                            <span class="text-lg font-bold text-emerald-400 mt-1 block">₹${totalIncome}</span>
+                        </div>
+                        <div class="bg-slate-800/40 border border-slate-700/50 p-4 rounded-2xl">
+                            <span class="text-xs text-slate-400 block">Total Expense</span>
+                            <span class="text-lg font-bold text-rose-400 mt-1 block">₹${totalExpense}</span>
+                        </div>
+                        <div class="bg-indigo-950/50 border border-indigo-500/30 p-4 rounded-2xl">
+                            <span class="text-xs text-indigo-300 block">Net Penalties Balance</span>
+                            <span class="text-lg font-bold text-cyan-300 mt-1 block">₹${netBalance}</span>
+                        </div>
                     </div>
 
                     <div class="overflow-x-auto">
@@ -2090,9 +2256,12 @@
                                         <td class="p-3"><span class="px-2.5 py-1 rounded-full text-xs font-semibold ${e.type === 'Income' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'}">${escapeAttr(e.type)}</span></td>
                                         <td class="p-3 text-right font-bold ${e.type === 'Income' ? 'text-emerald-400' : 'text-rose-400'}">₹${e.amount}</td>
                                         ${isAdmin ? `
-                                            <td class="p-3 text-right">
+                                            <td class="p-3 text-right space-x-2">
                                                 <button onclick="openExpenseModal(${e.id})" class="px-3 py-1.5 bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white rounded-lg text-xs font-medium transition inline-flex items-center gap-1">
                                                     <i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Edit
+                                                </button>
+                                                <button onclick="deleteExpense(${e.id})" class="px-2.5 py-1.5 bg-rose-600/20 text-rose-400 hover:bg-rose-600 hover:text-white rounded-lg text-xs font-medium transition inline-flex items-center gap-1" title="Delete">
+                                                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Delete
                                                 </button>
                                             </td>
                                         ` : ''}
@@ -2135,6 +2304,13 @@
                     </div>
                 </div>
             `;
+        }
+
+        function deleteExpense(id) {
+            if (appData.currentUser.role !== 'admin') return;
+            if (!confirm('Kya aap is penalty/transaction entry ko delete karna chahte hain?')) return;
+            appData.expenses = appData.expenses.filter(e => e.id !== id);
+            saveAppData();
         }
 
         function openExpenseModal(id = null) { 
