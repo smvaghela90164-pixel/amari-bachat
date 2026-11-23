@@ -99,9 +99,10 @@
     </script>
 
     <script>
-        const STORAGE_KEY = "amari_bachat_suraksha_v34";
+        const STORAGE_KEY = "amari_bachat_suraksha_v35";
         const SESSION_KEY = "amari_bachat_session_v1";
         const DEFAULT_MEMBER_PHOTO = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150";
+        const MAX_ACTIVITY_LOGS = 500;
 
         let sessionState = JSON.parse(sessionStorage.getItem(SESSION_KEY)) || {
             currentUser: null,
@@ -132,11 +133,50 @@
             savings: {},
             loans: [],
             expenses: [],
-            queries: []
+            queries: [],
+            activityLogs: []
         };
 
         let pendingMemberPhotoDataUrl = DEFAULT_MEMBER_PHOTO;
         let activeRepaymentHistoryLoanId = null;
+        let activityFilterCategory = "ALL";
+        let activitySearchQuery = "";
+
+        function formatExactDateTime(d = new Date()) {
+            const pad = (n) => String(n).padStart(2, "0");
+            const day = pad(d.getDate());
+            const month = pad(d.getMonth() + 1);
+            const year = d.getFullYear();
+            let hours = d.getHours();
+            const ampm = hours >= 12 ? "PM" : "AM";
+            hours = hours % 12;
+            if (hours === 0) hours = 12;
+            const hh = pad(hours);
+            const mm = pad(d.getMinutes());
+            const ss = pad(d.getSeconds());
+            return `${day}-${month}-${year}, ${hh}:${mm}:${ss} ${ampm}`;
+        }
+
+        function recordActivityLog(category, details) {
+            if (!Array.isArray(appData.activityLogs)) appData.activityLogs = [];
+            const actorName = appData.currentUser
+                ? (appData.currentUser.role === 'admin'
+                    ? `Admin (${appData.adminCreds && appData.adminCreds.displayName ? appData.adminCreds.displayName : 'Admin'})`
+                    : `Member (${appData.currentUser.name})`)
+                : "System";
+
+            appData.activityLogs.unshift({
+                id: Date.now() + "_" + Math.floor(Math.random() * 100000),
+                timestamp: formatExactDateTime(new Date()),
+                actor: actorName,
+                category: category || "General",
+                details: String(details || "")
+            });
+
+            if (appData.activityLogs.length > MAX_ACTIVITY_LOGS) {
+                appData.activityLogs = appData.activityLogs.slice(0, MAX_ACTIVITY_LOGS);
+            }
+        }
 
         function sanitizePhotoUrl(rawUrl) {
             if (!rawUrl || typeof rawUrl !== "string") return DEFAULT_MEMBER_PHOTO;
@@ -187,6 +227,10 @@
             if (!Array.isArray(appData.loans)) appData.loans = [];
             if (!Array.isArray(appData.expenses)) appData.expenses = [];
             if (!Array.isArray(appData.queries)) appData.queries = [];
+            if (!Array.isArray(appData.activityLogs)) appData.activityLogs = [];
+            if (appData.activityLogs.length > MAX_ACTIVITY_LOGS) {
+                appData.activityLogs = appData.activityLogs.slice(0, MAX_ACTIVITY_LOGS);
+            }
 
             appData.loans.forEach(l => {
                 if (!Array.isArray(l.repayments)) l.repayments = [];
@@ -233,7 +277,8 @@
                 savings: appData.savings,
                 loans: appData.loans,
                 expenses: appData.expenses,
-                queries: appData.queries
+                queries: appData.queries,
+                activityLogs: (appData.activityLogs || []).slice(0, MAX_ACTIVITY_LOGS)
             };
         }
 
@@ -266,6 +311,10 @@
 
         function saveSessionOnly() {
             sessionState.currentUser = appData.currentUser;
+            if (sessionState.activeTab === "activity" && (!appData.currentUser || appData.currentUser.role !== "admin")) {
+                sessionState.activeTab = "dashboard";
+                appData.activeTab = "dashboard";
+            }
             sessionState.activeTab = appData.activeTab;
             sessionStorage.setItem(SESSION_KEY, JSON.stringify(sessionState));
             render();
@@ -287,6 +336,11 @@
             if (!appData.currentUser) {
                 root.innerHTML = renderLoginScreen();
             } else {
+                if (appData.activeTab === "activity" && appData.currentUser.role !== "admin") {
+                    appData.activeTab = "dashboard";
+                    sessionState.activeTab = "dashboard";
+                    sessionStorage.setItem(SESSION_KEY, JSON.stringify(sessionState));
+                }
                 root.innerHTML = renderMainApp();
                 if (appData.activeTab === 'dashboard') {
                     initDashboardCharts();
@@ -404,6 +458,7 @@
                         <button onclick="setTab('expenses')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'expenses' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Penalties</button>
                         <button onclick="setTab('audit')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'audit' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Audit</button>
                         <button onclick="setTab('queries')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'queries' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Chat</button>
+                        ${isAdmin ? `<button onclick="setTab('activity')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'activity' ? 'bg-amber-500 text-slate-950 font-bold shadow-lg shadow-amber-500/30' : 'bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500 hover:text-slate-950'}">📋 Activity Log</button>` : ''}
                         <button onclick="toggleViewMode()" class="px-3 py-2 rounded-xl text-xs font-medium bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-600 hover:text-white transition flex items-center gap-1.5" title="Toggle Desktop / Mobile Screen Layout">
                             <i data-lucide="${isDesktopMode ? 'smartphone' : 'monitor'}" class="w-4 h-4"></i>
                             ${isDesktopMode ? 'Mobile View' : 'Desktop View'}
@@ -421,6 +476,7 @@
                     ${appData.activeTab === 'expenses' ? renderExpensesTab() : ''}
                     ${appData.activeTab === 'audit' ? renderAuditTab() : ''}
                     ${appData.activeTab === 'queries' ? renderQueriesTab() : ''}
+                    ${appData.activeTab === 'activity' && isAdmin ? renderActivityLogTab() : ''}
                 </main>
 
                 <!-- Admin Amount Add / Edit Modal -->
@@ -525,6 +581,146 @@
         function openSettingsModal() { document.getElementById('settingsModal').classList.remove('hidden'); }
         function closeSettingsModal() { document.getElementById('settingsModal').classList.add('hidden'); }
 
+        function renderActivityLogTab() {
+            if (!appData.currentUser || appData.currentUser.role !== 'admin') return "";
+            const logs = Array.isArray(appData.activityLogs) ? appData.activityLogs : [];
+            const categories = ["ALL", "Admin Amount", "Member", "Savings", "Loan", "Penalty", "Settings", "Chat"];
+
+            const filteredLogs = logs.filter(item => {
+                const catMatch = activityFilterCategory === "ALL" || item.category === activityFilterCategory;
+                const q = activitySearchQuery.trim().toLowerCase();
+                const textMatch = !q ||
+                    String(item.timestamp || "").toLowerCase().includes(q) ||
+                    String(item.category || "").toLowerCase().includes(q) ||
+                    String(item.actor || "").toLowerCase().includes(q) ||
+                    String(item.details || "").toLowerCase().includes(q);
+                return catMatch && textMatch;
+            });
+
+            return `
+                <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-6 shadow-xl">
+                    <div class="flex flex-wrap justify-between items-center gap-4">
+                        <div>
+                            <h2 class="text-xl font-bold text-white flex items-center gap-2">
+                                <i data-lucide="clipboard-list" class="w-5 h-5 text-amber-400"></i>
+                                અમારી બચત | અમારી સુરક્ષા - Activity & Update Log
+                            </h2>
+                            <p class="text-xs text-slate-400">Har update ka exact din aur samay (Latest ${MAX_ACTIVITY_LOGS} entries saved). Sirf Admin ke liye uplabdh.</p>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="px-3 py-1.5 rounded-xl bg-slate-800 border border-slate-700 text-xs text-amber-300 font-semibold">
+                                Entries: ${logs.length} / ${MAX_ACTIVITY_LOGS}
+                            </span>
+                            <button onclick="downloadActivityLogPDF()" class="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-medium transition shadow-lg">
+                                <i data-lucide="download" class="w-4 h-4"></i> Export PDF
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-wrap justify-between items-center gap-3 bg-slate-800/40 p-3.5 rounded-2xl border border-slate-700/50">
+                        <div class="flex flex-wrap gap-1.5">
+                            ${categories.map(cat => `
+                                <button onclick="setActivityFilterCategory('${escapeAttr(cat)}')" class="px-3 py-1.5 rounded-xl text-xs font-medium transition ${activityFilterCategory === cat ? 'bg-indigo-600 text-white' : 'bg-slate-900 text-slate-300 hover:bg-slate-700'}">
+                                    ${escapeAttr(cat)}
+                                </button>
+                            `).join('')}
+                        </div>
+                        <input type="text" value="${escapeAttr(activitySearchQuery)}" oninput="setActivitySearchQuery(this.value)" placeholder="Search date, time, member, amount..." class="w-full sm:w-64 bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500">
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="border-b border-slate-800 text-slate-400 text-xs uppercase">
+                                    <th class="p-3">#</th>
+                                    <th class="p-3">Date & Exact Time</th>
+                                    <th class="p-3">Category</th>
+                                    <th class="p-3">By</th>
+                                    <th class="p-3">Update Details</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-800 text-sm">
+                                ${filteredLogs.length === 0 ? `
+                                    <tr><td colspan="5" class="p-5 text-center text-slate-400 italic">Koi activity log entry nahi mili.</td></tr>
+                                ` : ''}
+                                ${filteredLogs.map((entry, idx) => `
+                                    <tr class="hover:bg-slate-800/40 transition">
+                                        <td class="p-3 text-slate-400 text-xs">${idx + 1}</td>
+                                        <td class="p-3 font-mono text-xs text-amber-300 whitespace-nowrap">${escapeAttr(entry.timestamp)}</td>
+                                        <td class="p-3 whitespace-nowrap">
+                                            <span class="px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+                                                ${escapeAttr(entry.category)}
+                                            </span>
+                                        </td>
+                                        <td class="p-3 text-xs text-slate-300 whitespace-nowrap">${escapeAttr(entry.actor)}</td>
+                                        <td class="p-3 text-white text-xs sm:text-sm">${escapeAttr(entry.details)}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        }
+
+        function setActivityFilterCategory(cat) {
+            activityFilterCategory = cat;
+            render();
+        }
+
+        function setActivitySearchQuery(val) {
+            activitySearchQuery = val;
+            render();
+        }
+
+        function downloadActivityLogPDF() {
+            if (!appData.currentUser || appData.currentUser.role !== 'admin') return;
+            const jsPDFRef = window.jspdf && window.jspdf.jsPDF;
+            if (!jsPDFRef) {
+                alert("PDF library load nahi hui, page refresh karke try karein.");
+                return;
+            }
+            const doc = new jsPDFRef();
+            doc.setFillColor(16, 185, 129);
+            doc.rect(0, 0, 210, 32, "F");
+            doc.setTextColor(255, 255, 255);
+            doc.setFontSize(15);
+            doc.text("Amari Bachat | Amari Suraksha - Activity Log", 14, 20);
+
+            doc.setTextColor(40, 40, 40);
+            doc.setFontSize(10);
+            doc.text(`Exported On: ${formatExactDateTime(new Date())} | Filter: ${activityFilterCategory}`, 14, 41);
+
+            const logs = Array.isArray(appData.activityLogs) ? appData.activityLogs : [];
+            const filtered = logs.filter(item => {
+                const catMatch = activityFilterCategory === "ALL" || item.category === activityFilterCategory;
+                const q = activitySearchQuery.trim().toLowerCase();
+                const textMatch = !q ||
+                    String(item.timestamp || "").toLowerCase().includes(q) ||
+                    String(item.category || "").toLowerCase().includes(q) ||
+                    String(item.actor || "").toLowerCase().includes(q) ||
+                    String(item.details || "").toLowerCase().includes(q);
+                return catMatch && textMatch;
+            });
+
+            const rows = filtered.map((item, i) => [
+                String(i + 1),
+                item.timestamp || "-",
+                item.category || "-",
+                item.actor || "-",
+                item.details || "-"
+            ]);
+
+            doc.autoTable({
+                head: [["#", "Date & Time", "Category", "By", "Update Details"]],
+                body: rows.length > 0 ? rows : [["-", "-", "-", "-", "No activity logs found"]],
+                startY: 48,
+                styles: { fontSize: 8.5 }
+            });
+
+            savePdfUnique(doc, "Activity_Log");
+        }
+
         function openAdminBalanceModal(id = null) {
             if (appData.currentUser.role !== 'admin') return;
             if (id) {
@@ -561,14 +757,18 @@
             if (idVal) {
                 const entry = appData.adminBalances.find(a => a.id === parseInt(idVal));
                 if (entry) {
+                    const oldAmt = entry.amount;
+                    const oldName = entry.name;
                     entry.name = nameVal;
                     entry.amount = amountVal;
+                    recordActivityLog("Admin Amount", `Edited Admin Balance: ${oldName} -> ${nameVal}, Amount: ₹${oldAmt} -> ₹${amountVal}`);
                 }
             } else {
                 const newId = appData.adminBalances.length > 0
                     ? Math.max(...appData.adminBalances.map(a => a.id)) + 1
                     : 1;
                 appData.adminBalances.push({ id: newId, name: nameVal, amount: amountVal });
+                recordActivityLog("Admin Amount", `Added Admin Balance: ${nameVal} with ₹${amountVal}`);
             }
 
             closeAdminBalanceModal();
@@ -581,8 +781,10 @@
                 alert('Kam se kam ek admin entry honi chahiye.');
                 return;
             }
+            const target = appData.adminBalances.find(a => a.id === id);
             if (confirm('Kya aap is admin entry ko hatana chahte hain?')) {
                 appData.adminBalances = appData.adminBalances.filter(a => a.id !== id);
+                recordActivityLog("Admin Amount", `Deleted Admin Balance entry: ${target ? `${target.name} (₹${target.amount})` : `ID #${id}`}`);
                 saveAppData();
             }
         }
@@ -599,6 +801,7 @@
             appData.adminCreds.password = newP;
             if (newUpi) appData.paymentSettings.upiId = newUpi;
 
+            recordActivityLog("Settings", `Updated Admin Settings (Name: ${newName}, Username: ${newU}, UPI: ${appData.paymentSettings.upiId})`);
             alert('Settings updated & synced to cloud!');
             closeSettingsModal();
             saveAppData();
@@ -635,6 +838,8 @@
                                 currentUser: sessionState.currentUser,
                                 activeTab: sessionState.activeTab
                             };
+                            normalizeAppData();
+                            recordActivityLog("Settings", `Restored data from backup file: ${file.name}`);
                             closeSettingsModal();
                             saveAppData();
                             alert('Data successfully cloud par restore ho gaya hai!');
@@ -901,6 +1106,7 @@
 
         function autoApplyLatePenalties() {
             let count = 0;
+            const appliedNames = [];
             appData.members.forEach(m => {
                 let res = checkMemberPaidStatus(m.id, appData.currentMonth);
                 if (!res.status) {
@@ -915,9 +1121,13 @@
                             date: new Date().toISOString().split('T')[0]
                         });
                         count++;
+                        appliedNames.push(m.name);
                     }
                 }
             });
+            if (count > 0) {
+                recordActivityLog("Penalty", `Auto-applied ₹50 late penalty for ${formatMonthMMYYYY(appData.currentMonth)} to ${count} member(s): ${appliedNames.join(", ")}`);
+            }
             alert(`${count} pending members par ₹50 late penalty apply kar di gayi hai!`);
             saveAppData();
         }
@@ -1596,17 +1806,28 @@
             savePdfUnique(doc, `Passbook_${m.name.replace(/\s+/g, '_')}`);
         }
 
-        function changeMonth(val) { appData.currentMonth = val; saveAppData(); }
+        function changeMonth(val) {
+            const oldMonth = appData.currentMonth;
+            appData.currentMonth = val;
+            recordActivityLog("Settings", `Changed active month: ${formatMonthMMYYYY(oldMonth)} -> ${formatMonthMMYYYY(val)}`);
+            saveAppData();
+        }
         
         function toggleSavings(id) {
             if (appData.currentUser.role !== 'admin') { alert('Sirf Admin hi status change kar sakta hai!'); return; }
+            const member = appData.members.find(m => m.id === id);
+            const mLabel = member ? member.name : `Member #${id}`;
             let key = `${appData.currentMonth}_${id}`;
             let current = appData.savings[key];
+            let nextPaid = false;
             if (current && typeof current === 'object') {
-                appData.savings[key] = !current.paid;
+                nextPaid = !current.paid;
+                appData.savings[key] = nextPaid;
             } else {
-                appData.savings[key] = !current;
+                nextPaid = !current;
+                appData.savings[key] = nextPaid;
             }
+            recordActivityLog("Savings", `${mLabel} (${formatMonthMMYYYY(appData.currentMonth)}) savings marked as ${nextPaid ? "PAID (₹500)" : "PENDING"}`);
             saveAppData();
         }
 
@@ -1621,11 +1842,15 @@
         function saveAdvancePayment() {
             let id = parseInt(document.getElementById('advMemberId').value);
             let advMonths = parseInt(document.getElementById('advMonthsCount').value) || 1;
+            const member = appData.members.find(m => m.id === id);
+            const mLabel = member ? member.name : `Member #${id}`;
             let key = `${appData.currentMonth}_${id}`;
             appData.savings[key] = { paid: true, advanceMonths: advMonths };
+            const totalAmt = 500 * (advMonths + 1);
+            recordActivityLog("Savings", `Recorded advance savings for ${mLabel} from ${formatMonthMMYYYY(appData.currentMonth)}: 1 Paid + ${advMonths} Advance month(s) = ₹${totalAmt}`);
             closeAdvanceModal();
             saveAppData();
-            alert(`Successfully recorded ₹${500 * (advMonths + 1)} including ${advMonths} month(s) advance!`);
+            alert(`Successfully recorded ₹${totalAmt} including ${advMonths} month(s) advance!`);
         }
 
         function openMemberModal(id = null) {
@@ -1678,18 +1903,21 @@
 
             if (id) {
                 let m = appData.members.find(x => x.id === parseInt(id));
-                if (m) { 
+                if (m) {
+                    const prevName = m.name;
                     m.name = name; 
                     m.age = age;
                     m.phone = phone; 
                     m.pin = pin;
                     m.photo = photo;
-                    m.joinMonth = joinMonth; 
+                    m.joinMonth = joinMonth;
+                    recordActivityLog("Member", `Updated member: ${prevName} -> ${name} (Phone: ${phone}, Join: ${formatMonthMMYYYY(joinMonth)})`);
                     alert(`Member "${name}" update ho gaya hai!`);
                 }
             } else {
                 let newId = appData.members.length > 0 ? Math.max(...appData.members.map(m => m.id)) + 1 : 1;
                 appData.members.push({ id: newId, name, age, phone, pin, photo, joinMonth });
+                recordActivityLog("Member", `Added new member: ${name} (Phone: ${phone}, Join: ${formatMonthMMYYYY(joinMonth)})`);
                 alert(`Naya member "${name}" add ho gaya hai!`);
             }
             closeMemberModal();
@@ -1700,6 +1928,7 @@
             if (appData.currentUser.role !== 'admin') return;
             if (confirm(`Kya aap "${name}" ko delete karna chahte hain?`)) {
                 appData.members = appData.members.filter(m => m.id !== id);
+                recordActivityLog("Member", `Deleted member: ${name} (ID #${id})`);
                 alert(`Member delete ho gaya hai.`);
                 saveAppData();
             }
@@ -1712,6 +1941,7 @@
                 if (loan) {
                     loan.deleted = true;
                     loan.deletedAt = new Date().toISOString().split('T')[0];
+                    recordActivityLog("Loan", `Deleted loan #${loan.id} for ${loan.memberName} (Loan Amount: ₹${loan.amount})`);
                     saveAppData();
                 }
             }
@@ -1784,12 +2014,15 @@
 
             if (!confirm('Kya aap is repayment entry ko delete karna chahte hain?')) return;
 
+            let removedEntry = null;
             const idxById = loan.repayments.findIndex(r => String(r.id) === String(repIdOrIndex));
             if (idxById !== -1) {
+                removedEntry = loan.repayments[idxById];
                 loan.repayments.splice(idxById, 1);
             } else {
                 const parsedIdx = parseInt(repIdOrIndex, 10);
                 if (!isNaN(parsedIdx) && parsedIdx >= 0 && parsedIdx < loan.repayments.length) {
+                    removedEntry = loan.repayments[parsedIdx];
                     loan.repayments.splice(parsedIdx, 1);
                 }
             }
@@ -1797,6 +2030,7 @@
             const repaidPrincipal = loan.repayments.reduce((sum, r) => r.type === 'Principal' ? sum + (parseFloat(r.amount) || 0) : sum, 0);
             loan.status = ((parseFloat(loan.amount) || 0) - repaidPrincipal) <= 0 ? 'Settled' : 'Active';
 
+            recordActivityLog("Loan", `Deleted ${removedEntry ? `${removedEntry.type} repayment of ₹${removedEntry.amount}` : "repayment entry"} on ${loan.memberName}'s Loan #${loan.id}`);
             saveAppData();
             renderRepaymentHistoryBody(loanId);
         }
@@ -1854,6 +2088,7 @@
             loan.repayments = updatedRepayments;
             loan.status = (amount - targetPrincipal) <= 0 ? 'Settled' : 'Active';
 
+            recordActivityLog("Loan", `Edited Loan #${loan.id} (${loan.memberName}): Amount ₹${amount}, Rate ${rate}%, Principal Paid ₹${targetPrincipal}, Interest Paid ₹${targetInterest}`);
             closeEditLoanModal();
             saveAppData();
         }
@@ -2123,7 +2358,9 @@
             let rate = parseFloat(document.getElementById('loanRate').value);
             let date = document.getElementById('loanDate').value || new Date().toISOString().split('T')[0];
             if (!amount) { alert('Loan amount dalein.'); return; }
-            appData.loans.push({ id: Date.now(), memberName, amount, rate, date, status: "Active", deleted: false, repayments: [] });
+            const newLoanId = Date.now();
+            appData.loans.push({ id: newLoanId, memberName, amount, rate, date, status: "Active", deleted: false, repayments: [] });
+            recordActivityLog("Loan", `Issued new Loan #${newLoanId} to ${memberName}: ₹${amount} at ${rate}%/mo (Date: ${date})`);
             closeLoanModal();
             saveAppData();
         }
@@ -2160,14 +2397,18 @@
                 if (!Array.isArray(loan.repayments)) loan.repayments = [];
                 const todayStr = new Date().toISOString().split('T')[0];
                 const stampBase = Date.now();
+                const partsDesc = [];
                 if (principalAmt > 0) {
                     loan.repayments.push({ id: `${stampBase}_p`, date: todayStr, amount: principalAmt, type: 'Principal' });
+                    partsDesc.push(`Principal ₹${principalAmt}`);
                 }
                 if (interestAmt > 0) {
                     loan.repayments.push({ id: `${stampBase}_i`, date: todayStr, amount: interestAmt, type: 'Interest' });
+                    partsDesc.push(`Interest ₹${interestAmt}`);
                 }
                 const repaidPrincipal = loan.repayments.reduce((sum, r) => r.type === 'Principal' ? sum + r.amount : sum, 0);
                 if (loan.amount - repaidPrincipal <= 0) loan.status = 'Settled';
+                recordActivityLog("Loan", `Recorded repayment on Loan #${loan.id} (${loan.memberName}): ${partsDesc.join(" + ")}`);
             }
             closeRepaymentModal();
             saveAppData();
@@ -2309,7 +2550,9 @@
         function deleteExpense(id) {
             if (appData.currentUser.role !== 'admin') return;
             if (!confirm('Kya aap is penalty/transaction entry ko delete karna chahte hain?')) return;
+            const target = appData.expenses.find(e => e.id === id);
             appData.expenses = appData.expenses.filter(e => e.id !== id);
+            recordActivityLog("Penalty", `Deleted ${target ? `${target.type} entry "${target.title}" (₹${target.amount})` : `expense #${id}`}`);
             saveAppData();
         }
 
@@ -2352,9 +2595,11 @@
                     exp.amount = amount;
                     exp.date = date;
                     exp.type = type;
+                    recordActivityLog("Penalty", `Edited ${type} entry: "${title}" (₹${amount}, Date: ${date})`);
                 }
             } else {
                 appData.expenses.push({ id: Date.now(), title, amount, type, date });
+                recordActivityLog("Penalty", `Added ${type} entry: "${title}" (₹${amount}, Date: ${date})`);
             }
             closeExpenseModal();
             saveAppData();
@@ -2525,6 +2770,7 @@
             let text = document.getElementById('queryText').value.trim();
             if (!text) { alert('Message likhein.'); return; }
             appData.queries.push({ id: Date.now(), memberName: appData.currentUser.name, text, date: new Date().toISOString().split('T')[0], reply: "" });
+            recordActivityLog("Chat", `New query from ${appData.currentUser.name}: "${text}"`);
             saveAppData();
         }
 
@@ -2532,7 +2778,10 @@
             let replyText = document.getElementById(`reply_${qid}`).value.trim();
             if (!replyText) { alert('Reply likhein.'); return; }
             let q = appData.queries.find(x => x.id === qid);
-            if (q) { q.reply = replyText; }
+            if (q) {
+                q.reply = replyText;
+                recordActivityLog("Chat", `Admin replied to ${q.memberName}: "${replyText}"`);
+            }
             saveAppData();
         }
 
