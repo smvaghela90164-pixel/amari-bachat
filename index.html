@@ -37,7 +37,7 @@
     <!-- Firebase SDK (Modular v11 via CDN) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
-        import { getDatabase, ref, set, onValue } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-database.js";
+        import { getDatabase, ref, set, get, onValue } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-database.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyCCYGVycm5lNTZsP_mm_t-i94Ss8Oi8E34",
@@ -53,6 +53,7 @@
         const firebaseApp = initializeApp(firebaseConfig);
         const db = getDatabase(firebaseApp);
         const sharedDataRef = ref(db, "amari_bachat_suraksha_shared");
+        const activeAdminSessionRef = ref(db, "amari_bachat_suraksha_shared/activeAdminSession");
 
         window.dbSync = {
             saveSharedData: async function(sharedPayload) {
@@ -63,6 +64,22 @@
                 } catch (err) {
                     console.error("Firebase Save Error:", err);
                     updateSyncStatus("error");
+                }
+            },
+            fetchActiveAdminSession: async function() {
+                try {
+                    const snap = await get(activeAdminSessionRef);
+                    return snap.exists() ? snap.val() : null;
+                } catch (err) {
+                    console.error("Fetch Active Session Error:", err);
+                    return null;
+                }
+            },
+            setActiveAdminSession: async function(sessionObj) {
+                try {
+                    await set(activeAdminSessionRef, sessionObj);
+                } catch (err) {
+                    console.error("Set Active Session Error:", err);
                 }
             }
         };
@@ -104,6 +121,7 @@
         const SESSION_KEY = "amari_bachat_session_v3";
         const DEFAULT_MEMBER_PHOTO = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150";
         const MAX_ACTIVITY_LOGS = 500;
+        const ADMIN_LOCK_TIMEOUT_MS = 30 * 60 * 1000;
 
         let sessionState = JSON.parse(sessionStorage.getItem(SESSION_KEY)) || {
             currentUser: null,
@@ -122,6 +140,7 @@
         const defaultSharedData = {
             adminCreds: { username: "admin", password: "admin123", displayName: "Main Admin", role: "Super Admin" },
             adminAccounts: defaultAdminAccounts,
+            activeAdminSession: null,
             adminBalances: [
                 { id: 1, name: "Main Admin", amount: 0 },
                 { id: 2, name: "Co-Admin 1", amount: 0 },
@@ -146,6 +165,21 @@
         let activityFilterCategory = "ALL";
         let activitySearchQuery = "";
         let loginErrorMessage = "";
+        let showEmergencyUnlockButton = false;
+        let savedLoginUserDraft = "";
+        let savedLoginPassDraft = "";
+
+        function isSessionExpired(sess) {
+            if (!sess || !sess.active) return true;
+            const lastSeen = Number(sess.lastActiveAt || sess.loginAt || 0);
+            if (!lastSeen) return false;
+            return (Date.now() - lastSeen) > ADMIN_LOCK_TIMEOUT_MS;
+        }
+
+        function getValidActiveAdminSession(sess = appData.activeAdminSession) {
+            if (!sess || !sess.active || isSessionExpired(sess)) return null;
+            return sess;
+        }
 
         function isAnyAdminUser(user = appData.currentUser) {
             return Boolean(user && user.role === "admin");
@@ -378,6 +412,7 @@
             return {
                 adminCreds: appData.adminCreds,
                 adminAccounts: appData.adminAccounts,
+                activeAdminSession: appData.activeAdminSession || null,
                 adminBalances: appData.adminBalances,
                 currentMonth: appData.currentMonth,
                 members: appData.members,
@@ -403,6 +438,23 @@
                     appData.adminAccounts = previousAccounts;
                 }
                 normalizeAppData();
+
+                // Agar current device par koi admin logged in hai aur Main Admin ne Emergency Unlock kar diya hai:
+                if (appData.currentUser && appData.currentUser.role === "admin" && appData.currentUser.sessionToken) {
+                    const cloudSess = cloudData.activeAdminSession;
+                    if (!cloudSess || !cloudSess.active || cloudSess.sessionToken !== appData.currentUser.sessionToken) {
+                        const unlockedBy = (cloudSess && cloudSess.active && cloudSess.displayName) ? cloudSess.displayName : "Main Admin";
+                        appData.currentUser = null;
+                        sessionState.currentUser = null;
+                        sessionStorage.setItem(SESSION_KEY, JSON.stringify(sessionState));
+                        loginErrorMessage = `Aapka session ${unlockedBy} dwara Emergency Unlock se band kar diya gaya hai.`;
+                        showEmergencyUnlockButton = false;
+                        localStorage.setItem(STORAGE_KEY, JSON.stringify(getSharedPayload()));
+                        render();
+                        return;
+                    }
+                }
+
                 localStorage.setItem(STORAGE_KEY, JSON.stringify(getSharedPayload()));
                 render();
                 if (activeRepaymentHistoryLoanId !== null) {
@@ -442,6 +494,9 @@
 
         function saveAppData() {
             normalizeAppData();
+            if (appData.currentUser && appData.currentUser.role === "admin" && appData.activeAdminSession && appData.activeAdminSession.sessionToken === appData.currentUser.sessionToken) {
+                appData.activeAdminSession.lastActiveAt = Date.now();
+            }
             const payload = getSharedPayload();
             localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
             if (window.dbSync) {
@@ -449,6 +504,16 @@
             }
             render();
         }
+
+        // Periodic heartbeat while an admin is logged in so valid session stays alive
+        setInterval(() => {
+            if (appData.currentUser && appData.currentUser.role === "admin" && appData.activeAdminSession && appData.activeAdminSession.active && appData.activeAdminSession.sessionToken === appData.currentUser.sessionToken) {
+                appData.activeAdminSession.lastActiveAt = Date.now();
+                if (window.dbSync && typeof window.dbSync.setActiveAdminSession === "function") {
+                    window.dbSync.setActiveAdminSession(appData.activeAdminSession);
+                }
+            }
+        }, 60 * 1000);
 
         function safeRefreshIcons() {
             try {
@@ -499,6 +564,8 @@
 
         function renderLoginScreen() {
             const isDesktopMode = sessionState.viewMode === "desktop";
+            const activeCloudSess = getValidActiveAdminSession(appData.activeAdminSession);
+
             return `
                 <div class="min-h-[85vh] flex items-center justify-center animate-fade-in">
                     <div class="bg-slate-900/95 backdrop-blur-2xl border border-slate-800 p-8 rounded-3xl shadow-2xl w-full max-w-md text-center">
@@ -518,14 +585,31 @@
                         <div class="space-y-6 text-left">
                             <div class="bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50">
                                 <h3 class="font-semibold text-indigo-300 mb-3 flex items-center gap-2"><i data-lucide="user-cog" class="w-5 h-5"></i> Admin / Co-Admin Login</h3>
+                                
+                                ${activeCloudSess ? `
+                                    <div class="mb-3 bg-amber-950/60 border border-amber-500/40 px-3 py-2.5 rounded-xl text-xs text-amber-200">
+                                        <p class="font-bold text-amber-300 flex items-center gap-1.5">🔒 Active Admin Session</p>
+                                        <p class="mt-0.5">Abhi <b>${escapeAttr(activeCloudSess.displayName)}</b> (${activeCloudSess.adminLevel === 'main' ? 'Main Admin' : 'Co-Admin'}) ka login chal raha hai (Since: ${escapeAttr(activeCloudSess.loginTimeText || '-')}).</p>
+                                    </div>
+                                ` : ''}
+
                                 <div class="space-y-3">
-                                    <input type="text" id="adminUser" autocomplete="username" placeholder="Username (e.g. admin, coadmin1, coadmin2)" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500">
+                                    <input type="text" id="adminUser" value="${escapeAttr(savedLoginUserDraft)}" autocomplete="username" placeholder="Username (e.g. admin, coadmin1, coadmin2)" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500">
                                     <div class="relative">
-                                        <input type="password" id="adminPass" autocomplete="current-password" placeholder="Password" class="w-full bg-slate-900 border border-slate-700 rounded-xl pl-4 pr-11 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500">
+                                        <input type="password" id="adminPass" value="${escapeAttr(savedLoginPassDraft)}" autocomplete="current-password" placeholder="Password" class="w-full bg-slate-900 border border-slate-700 rounded-xl pl-4 pr-11 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500">
                                         <button type="button" onclick="toggleLoginPasswordVisibility()" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs px-1" title="Show / Hide Password">👁️</button>
                                     </div>
-                                    ${loginErrorMessage ? `<p id="loginErrorBox" class="text-xs text-rose-400 bg-rose-950/50 border border-rose-500/30 px-3 py-2 rounded-xl">${escapeAttr(loginErrorMessage)}</p>` : ''}
-                                    <button type="button" onclick="window.handleAdminLogin()" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 rounded-xl transition shadow-lg shadow-indigo-600/30">Login to Admin Panel</button>
+                                    ${loginErrorMessage ? `
+                                        <div id="loginErrorBox" class="text-xs text-rose-300 bg-rose-950/60 border border-rose-500/40 px-3 py-2.5 rounded-xl space-y-2">
+                                            <p>${escapeAttr(loginErrorMessage)}</p>
+                                            ${showEmergencyUnlockButton ? `
+                                                <button type="button" onclick="window.handleEmergencyUnlockAndLogin()" class="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold py-2 px-3 rounded-xl text-xs transition shadow-lg">
+                                                    🔓 Emergency Unlock & Login (Main Admin)
+                                                </button>
+                                            ` : ''}
+                                        </div>
+                                    ` : ''}
+                                    <button type="button" onclick="window.handleAdminLogin(false)" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 rounded-xl transition shadow-lg shadow-indigo-600/30">Login to Admin Panel</button>
                                 </div>
                             </div>
 
@@ -552,68 +636,52 @@
             `;
         }
 
-        function handleAdminLogin() {
+        function findMatchedAdminAccount(u, p) {
+            normalizeAdminAccounts();
+            const candidatePool = [
+                ...(Array.isArray(appData.adminAccounts) ? appData.adminAccounts : []),
+                ...defaultAdminAccounts
+            ];
+
+            let matched = candidatePool.find(acc =>
+                String(acc.username || "").trim().toLowerCase() === u.toLowerCase() &&
+                String(acc.password || "").trim() === p
+            );
+
+            if (!matched && appData.adminCreds) {
+                if (
+                    String(appData.adminCreds.username || "").trim().toLowerCase() === u.toLowerCase() &&
+                    String(appData.adminCreds.password || "").trim() === p
+                ) {
+                    matched = {
+                        id: "main_admin",
+                        username: String(appData.adminCreds.username || "admin").trim(),
+                        password: String(appData.adminCreds.password || "").trim(),
+                        displayName: String(appData.adminCreds.displayName || "Main Admin").trim(),
+                        adminLevel: "main"
+                    };
+                }
+            }
+            return matched || null;
+        }
+
+        async function handleAdminLogin(forceEmergencyUnlock = false) {
             try {
                 const uEl = document.getElementById('adminUser');
                 const pEl = document.getElementById('adminPass');
-                const u = (uEl ? uEl.value : "").trim();
-                const p = (pEl ? pEl.value : "").trim();
+                const u = (uEl ? uEl.value : savedLoginUserDraft).trim();
+                const p = (pEl ? pEl.value : savedLoginPassDraft).trim();
+                savedLoginUserDraft = u;
+                savedLoginPassDraft = p;
 
-                normalizeAdminAccounts();
-                const candidatePool = [
-                    ...(Array.isArray(appData.adminAccounts) ? appData.adminAccounts : []),
-                    ...defaultAdminAccounts
-                ];
+                const matched = findMatchedAdminAccount(u, p);
 
-                let matched = candidatePool.find(acc =>
-                    String(acc.username || "").trim().toLowerCase() === u.toLowerCase() &&
-                    String(acc.password || "").trim() === p
-                );
-
-                if (!matched && appData.adminCreds) {
-                    if (
-                        String(appData.adminCreds.username || "").trim().toLowerCase() === u.toLowerCase() &&
-                        String(appData.adminCreds.password || "").trim() === p
-                    ) {
-                        matched = {
-                            id: "main_admin",
-                            username: String(appData.adminCreds.username || "admin").trim(),
-                            password: String(appData.adminCreds.password || "").trim(),
-                            displayName: String(appData.adminCreds.displayName || "Main Admin").trim(),
-                            adminLevel: "main"
-                        };
-                    }
-                }
-
-                if (matched) {
-                    loginErrorMessage = "";
-                    const normalizedMatched = {
-                        id: matched.id || (matched.adminLevel === "main" ? "main_admin" : "co_admin_1"),
-                        username: String(matched.username || u).trim(),
-                        password: String(matched.password || p).trim(),
-                        displayName: String(matched.displayName || "Admin").trim(),
-                        adminLevel: matched.adminLevel === "main" ? "main" : "co"
-                    };
-
-                    const existingIdx = appData.adminAccounts.findIndex(a => a.id === normalizedMatched.id || a.username.toLowerCase() === normalizedMatched.username.toLowerCase());
-                    if (existingIdx !== -1) {
-                        appData.adminAccounts[existingIdx] = normalizedMatched;
-                    }
-
-                    appData.currentUser = {
-                        role: 'admin',
-                        adminId: normalizedMatched.id,
-                        username: normalizedMatched.username,
-                        displayName: normalizedMatched.displayName,
-                        adminLevel: normalizedMatched.adminLevel
-                    };
-                    appData.activeTab = 'dashboard';
-                    sessionState.currentUser = appData.currentUser;
-                    sessionState.activeTab = appData.activeTab;
-                    sessionStorage.setItem(SESSION_KEY, JSON.stringify(sessionState));
-                    recordActivityLog("Settings", `Logged in (${normalizedMatched.displayName} - ${normalizedMatched.adminLevel === 'main' ? 'Main Admin' : 'Co-Admin'})`);
-                    saveAppData();
-                } else {
+                if (!matched) {
+                    showEmergencyUnlockButton = false;
+                    const candidatePool = [
+                        ...(Array.isArray(appData.adminAccounts) ? appData.adminAccounts : []),
+                        ...defaultAdminAccounts
+                    ];
                     const userExists = candidatePool.some(acc => String(acc.username || "").trim().toLowerCase() === u.toLowerCase());
                     loginErrorMessage = !u || !p
                         ? "Kripya Username aur Password dono dalein."
@@ -621,7 +689,84 @@
                             ? `Username "${u}" ke liye password galat hai.`
                             : `Username "${u}" nahi mila. Valid usernames: admin, coadmin1, coadmin2.`);
                     render();
+                    return;
                 }
+
+                // Latest cloud active session check karein
+                let latestCloudSess = appData.activeAdminSession;
+                if (window.dbSync && typeof window.dbSync.fetchActiveAdminSession === "function") {
+                    const fetched = await window.dbSync.fetchActiveAdminSession();
+                    if (fetched !== undefined) {
+                        latestCloudSess = fetched;
+                        appData.activeAdminSession = fetched;
+                    }
+                }
+
+                const validLock = getValidActiveAdminSession(latestCloudSess);
+                const isMainAttempt = matched.adminLevel === "main";
+
+                if (validLock && !forceEmergencyUnlock) {
+                    const roleLabel = validLock.adminLevel === "main" ? "Main Admin" : "Co-Admin";
+                    loginErrorMessage = `Login Blocked: Abhi "${validLock.displayName}" (${roleLabel}) ka login chal raha hai (Login Time: ${validLock.loginTimeText || "-"}). Jab tak unka logout nahi hota, doosra admin login nahi kar sakta.`;
+                    showEmergencyUnlockButton = isMainAttempt;
+                    render();
+                    return;
+                }
+
+                // Grant login & create active session lock
+                loginErrorMessage = "";
+                showEmergencyUnlockButton = false;
+                savedLoginUserDraft = "";
+                savedLoginPassDraft = "";
+
+                const normalizedMatched = {
+                    id: matched.id || (matched.adminLevel === "main" ? "main_admin" : "co_admin_1"),
+                    username: String(matched.username || u).trim(),
+                    password: String(matched.password || p).trim(),
+                    displayName: String(matched.displayName || "Admin").trim(),
+                    adminLevel: matched.adminLevel === "main" ? "main" : "co"
+                };
+
+                const existingIdx = appData.adminAccounts.findIndex(a => a.id === normalizedMatched.id || a.username.toLowerCase() === normalizedMatched.username.toLowerCase());
+                if (existingIdx !== -1) {
+                    appData.adminAccounts[existingIdx] = normalizedMatched;
+                }
+
+                const nowMs = Date.now();
+                const nowFormatted = formatExactDateTime(new Date(nowMs));
+                const newSessionToken = `sess_${nowMs}_${Math.floor(Math.random() * 1000000)}`;
+
+                appData.activeAdminSession = {
+                    active: true,
+                    sessionToken: newSessionToken,
+                    adminId: normalizedMatched.id,
+                    username: normalizedMatched.username,
+                    displayName: normalizedMatched.displayName,
+                    adminLevel: normalizedMatched.adminLevel,
+                    loginTimeText: nowFormatted,
+                    loginAt: nowMs,
+                    lastActiveAt: nowMs
+                };
+
+                appData.currentUser = {
+                    role: 'admin',
+                    sessionToken: newSessionToken,
+                    adminId: normalizedMatched.id,
+                    username: normalizedMatched.username,
+                    displayName: normalizedMatched.displayName,
+                    adminLevel: normalizedMatched.adminLevel
+                };
+                appData.activeTab = 'dashboard';
+                sessionState.currentUser = appData.currentUser;
+                sessionState.activeTab = appData.activeTab;
+                sessionStorage.setItem(SESSION_KEY, JSON.stringify(sessionState));
+
+                if (forceEmergencyUnlock && validLock) {
+                    recordActivityLog("Settings", `Emergency Unlock used by Main Admin (${normalizedMatched.displayName}) to close previous session of ${validLock.displayName}`);
+                } else {
+                    recordActivityLog("Settings", `Logged in (${normalizedMatched.displayName} - ${normalizedMatched.adminLevel === 'main' ? 'Main Admin' : 'Co-Admin'})`);
+                }
+                saveAppData();
             } catch (err) {
                 console.error("Login error:", err);
                 loginErrorMessage = "Login process mein error aayi: " + (err && err.message ? err.message : "Unknown error");
@@ -629,6 +774,45 @@
             }
         }
         window.handleAdminLogin = handleAdminLogin;
+
+        window.handleEmergencyUnlockAndLogin = function() {
+            handleAdminLogin(true);
+        };
+
+        function clearActiveAdminLockFromDashboard() {
+            if (!isMainAdminUser()) {
+                alert("Sirf Main Admin hi Emergency Unlock kar sakta hai!");
+                return;
+            }
+            const currentLock = getValidActiveAdminSession(appData.activeAdminSession);
+            if (!currentLock) {
+                alert("Abhi koi bahari active session lock nahi hai.");
+                return;
+            }
+            if (confirm(`Kya aap "${currentLock.displayName}" ke active lock ko Emergency Unlock karke clear karna chahte hain?`)) {
+                const nowMs = Date.now();
+                const nowFormatted = formatExactDateTime(new Date(nowMs));
+                const freshToken = `sess_${nowMs}_${Math.floor(Math.random() * 1000000)}`;
+                appData.currentUser.sessionToken = freshToken;
+                sessionState.currentUser = appData.currentUser;
+                sessionStorage.setItem(SESSION_KEY, JSON.stringify(sessionState));
+
+                appData.activeAdminSession = {
+                    active: true,
+                    sessionToken: freshToken,
+                    adminId: appData.currentUser.adminId || "main_admin",
+                    username: appData.currentUser.username || "admin",
+                    displayName: getActiveAdminName(appData.currentUser),
+                    adminLevel: "main",
+                    loginTimeText: nowFormatted,
+                    loginAt: nowMs,
+                    lastActiveAt: nowMs
+                };
+                recordActivityLog("Settings", `Main Admin (${getActiveAdminName(appData.currentUser)}) triggered Emergency Unlock on ${currentLock.displayName}'s session`);
+                saveAppData();
+                alert("Emergency Unlock complete! Ab sirf aapka Main Admin session active hai.");
+            }
+        }
 
         function handleMemberLogin() {
             const name = document.getElementById('selectedMember').value;
@@ -643,16 +827,34 @@
             }
 
             loginErrorMessage = "";
+            showEmergencyUnlockButton = false;
             appData.currentUser = { role: 'member', name: memberObj.name, memberId: memberObj.id };
             appData.activeTab = 'dashboard';
             saveSessionOnly();
         }
         window.handleMemberLogin = handleMemberLogin;
 
-        function logout() {
+        async function logout() {
+            const wasAdmin = appData.currentUser && appData.currentUser.role === "admin";
+            const leavingAdminName = wasAdmin ? getActiveAdminName(appData.currentUser) : "";
+            const leavingToken = wasAdmin ? appData.currentUser.sessionToken : null;
+
             loginErrorMessage = "";
-            appData.currentUser = null;
-            saveSessionOnly();
+            showEmergencyUnlockButton = false;
+
+            if (wasAdmin) {
+                if (!appData.activeAdminSession || appData.activeAdminSession.sessionToken === leavingToken) {
+                    appData.activeAdminSession = null;
+                }
+                recordActivityLog("Settings", `Logged out (${leavingAdminName})`);
+                appData.currentUser = null;
+                sessionState.currentUser = null;
+                sessionStorage.setItem(SESSION_KEY, JSON.stringify(sessionState));
+                saveAppData();
+            } else {
+                appData.currentUser = null;
+                saveSessionOnly();
+            }
         }
 
         function renderMainApp() {
@@ -685,12 +887,13 @@
                         <button onclick="setTab('audit')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'audit' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Audit</button>
                         <button onclick="setTab('queries')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'queries' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Chat</button>
                         ${isMainAdmin ? `<button onclick="setTab('activity')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'activity' ? 'bg-amber-500 text-slate-950 font-bold shadow-lg shadow-amber-500/30' : 'bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500 hover:text-slate-950'}">📋 Activity Log</button>` : ''}
+                        ${isMainAdmin ? `<button onclick="clearActiveAdminLockFromDashboard()" class="px-3 py-2 rounded-xl text-xs font-medium bg-amber-600/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500 hover:text-slate-950 transition" title="Emergency Unlock Active Admin Lock">🔓 Emergency Unlock</button>` : ''}
                         <button onclick="toggleViewMode()" class="px-3 py-2 rounded-xl text-xs font-medium bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-600 hover:text-white transition flex items-center gap-1.5" title="Toggle Desktop / Mobile Screen Layout">
                             <i data-lucide="${isDesktopMode ? 'smartphone' : 'monitor'}" class="w-4 h-4"></i>
                             ${isDesktopMode ? 'Mobile View' : 'Desktop View'}
                         </button>
                         ${isMainAdmin ? `<button onclick="openSettingsModal()" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition" title="Main Admin Settings"><i data-lucide="settings" class="w-5 h-5"></i></button>` : ''}
-                        <button onclick="logout()" class="px-3 py-2 bg-rose-600/20 text-rose-400 hover:bg-rose-600 hover:text-white rounded-xl text-xs font-medium transition" title="Logout"><i data-lucide="log-out" class="w-4 h-4"></i></button>
+                        <button onclick="logout()" class="px-3 py-2 bg-rose-600/20 text-rose-400 hover:bg-rose-600 hover:text-white rounded-xl text-xs font-medium transition flex items-center gap-1" title="Logout & Release Lock"><i data-lucide="log-out" class="w-4 h-4"></i> Logout</button>
                     </div>
                 </header>
 
@@ -1067,6 +1270,10 @@
             appData.adminCreds = { username: newU, password: newP, displayName: newName, role: "Super Admin" };
             appData.currentUser.displayName = newName;
             appData.currentUser.username = newU;
+            if (appData.activeAdminSession && appData.activeAdminSession.sessionToken === appData.currentUser.sessionToken) {
+                appData.activeAdminSession.displayName = newName;
+                appData.activeAdminSession.username = newU;
+            }
 
             recordActivityLog("Settings", `Updated Main Admin (${newName}) and Co-Admins (${co1Name}, ${co2Name}) credentials`);
             alert('Main Admin & Co-Admins settings updated & synced to cloud!');
@@ -1100,9 +1307,11 @@
                     const importedData = JSON.parse(event.target.result);
                     if (importedData && importedData.members) {
                         if (confirm('Kya aap sach mein yeh data restore karna chahte hain? Sabhi devices par yeh naya data update ho jayega.')) {
+                            const preservedLock = appData.activeAdminSession;
                             appData = {
                                 ...defaultSharedData,
                                 ...stripIgnoredLegacyFields(importedData),
+                                activeAdminSession: preservedLock,
                                 currentUser: sessionState.currentUser,
                                 activeTab: sessionState.activeTab
                             };
