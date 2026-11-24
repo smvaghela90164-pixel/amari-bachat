@@ -87,8 +87,10 @@
             updateSyncStatus("connected");
             if (snapshot.exists()) {
                 const cloudData = snapshot.val();
-                window.applyCloudData(cloudData);
-            } else {
+                if (typeof window.applyCloudData === "function") {
+                    window.applyCloudData(cloudData);
+                }
+            } else if (typeof window.pushInitialDataToCloud === "function") {
                 window.pushInitialDataToCloud();
             }
         }, (error) => {
@@ -98,8 +100,8 @@
     </script>
 
     <script>
-        const STORAGE_KEY = "amari_bachat_suraksha_v36";
-        const SESSION_KEY = "amari_bachat_session_v2";
+        const STORAGE_KEY = "amari_bachat_suraksha_v37";
+        const SESSION_KEY = "amari_bachat_session_v3";
         const DEFAULT_MEMBER_PHOTO = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150";
         const MAX_ACTIVITY_LOGS = 500;
 
@@ -233,7 +235,7 @@
             return copy;
         }
 
-        let localCached = JSON.parse(localStorage.getItem(STORAGE_KEY)) || JSON.parse(localStorage.getItem("amari_bachat_suraksha_v35"));
+        let localCached = JSON.parse(localStorage.getItem(STORAGE_KEY)) || JSON.parse(localStorage.getItem("amari_bachat_suraksha_v36")) || JSON.parse(localStorage.getItem("amari_bachat_suraksha_v35"));
         let appData = {
             ...defaultSharedData,
             ...stripIgnoredLegacyFields(localCached),
@@ -243,8 +245,15 @@
 
         function normalizeAdminAccounts() {
             const baseCreds = appData.adminCreds || defaultSharedData.adminCreds;
-            let accounts = Array.isArray(appData.adminAccounts) && appData.adminAccounts.length > 0
-                ? appData.adminAccounts.map((acc, idx) => ({
+            let rawList = [];
+            if (Array.isArray(appData.adminAccounts)) {
+                rawList = appData.adminAccounts;
+            } else if (appData.adminAccounts && typeof appData.adminAccounts === "object") {
+                rawList = Object.values(appData.adminAccounts);
+            }
+
+            let accounts = rawList.length > 0
+                ? rawList.map((acc, idx) => ({
                     id: acc.id || (idx === 0 ? "main_admin" : `co_admin_${idx}`),
                     username: String(acc.username || "").trim(),
                     password: String(acc.password || "").trim(),
@@ -381,24 +390,29 @@
         }
 
         window.applyCloudData = function(cloudData) {
-            const previousAccounts = Array.isArray(appData.adminAccounts) ? [...appData.adminAccounts] : [...defaultAdminAccounts];
-            appData = {
-                ...defaultSharedData,
-                ...stripIgnoredLegacyFields(cloudData),
-                currentUser: sessionState.currentUser,
-                activeTab: sessionState.activeTab
-            };
-            if (!Array.isArray(cloudData.adminAccounts) || cloudData.adminAccounts.length === 0) {
-                appData.adminAccounts = previousAccounts;
-            }
-            normalizeAppData();
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(getSharedPayload()));
-            render();
-            if (activeRepaymentHistoryLoanId !== null) {
-                const modal = document.getElementById("repaymentHistoryModal");
-                if (modal && !modal.classList.contains("hidden")) {
-                    renderRepaymentHistoryBody(activeRepaymentHistoryLoanId);
+            try {
+                if (!cloudData || typeof cloudData !== "object") return;
+                const previousAccounts = Array.isArray(appData.adminAccounts) ? [...appData.adminAccounts] : [...defaultAdminAccounts];
+                appData = {
+                    ...defaultSharedData,
+                    ...stripIgnoredLegacyFields(cloudData),
+                    currentUser: sessionState.currentUser,
+                    activeTab: sessionState.activeTab
+                };
+                if (!cloudData.adminAccounts) {
+                    appData.adminAccounts = previousAccounts;
                 }
+                normalizeAppData();
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(getSharedPayload()));
+                render();
+                if (activeRepaymentHistoryLoanId !== null) {
+                    const modal = document.getElementById("repaymentHistoryModal");
+                    if (modal && !modal.classList.contains("hidden")) {
+                        renderRepaymentHistoryBody(activeRepaymentHistoryLoanId);
+                    }
+                }
+            } catch (e) {
+                console.error("applyCloudData error:", e);
             }
         };
 
@@ -436,26 +450,45 @@
             render();
         }
 
+        function safeRefreshIcons() {
+            try {
+                if (window.lucide && typeof window.lucide.createIcons === "function") {
+                    window.lucide.createIcons();
+                }
+            } catch (e) {
+                console.warn("Lucide icon refresh skipped:", e);
+            }
+        }
+
         function render() {
-            applyViewModeLayout();
-            const root = document.getElementById("app");
-            if (!appData.currentUser) {
-                root.innerHTML = renderLoginScreen();
-            } else {
-                if (appData.activeTab === "deadline") {
-                    appData.activeTab = "dashboard";
+            try {
+                applyViewModeLayout();
+                const root = document.getElementById("app");
+                if (!root) return;
+                if (!appData.currentUser) {
+                    root.innerHTML = renderLoginScreen();
+                } else {
+                    if (appData.activeTab === "deadline") {
+                        appData.activeTab = "dashboard";
+                    }
+                    if (appData.activeTab === "activity" && !isMainAdminUser()) {
+                        appData.activeTab = "dashboard";
+                        sessionState.activeTab = "dashboard";
+                        sessionStorage.setItem(SESSION_KEY, JSON.stringify(sessionState));
+                    }
+                    root.innerHTML = renderMainApp();
+                    if (appData.activeTab === 'dashboard') {
+                        initDashboardCharts();
+                    }
                 }
-                if (appData.activeTab === "activity" && !isMainAdminUser()) {
-                    appData.activeTab = "dashboard";
-                    sessionState.activeTab = "dashboard";
-                    sessionStorage.setItem(SESSION_KEY, JSON.stringify(sessionState));
-                }
-                root.innerHTML = renderMainApp();
-                if (appData.activeTab === 'dashboard') {
-                    initDashboardCharts();
+                safeRefreshIcons();
+            } catch (err) {
+                console.error("Render error:", err);
+                const root = document.getElementById("app");
+                if (root && !appData.currentUser) {
+                    root.innerHTML = renderLoginScreen();
                 }
             }
-            lucide.createIcons();
         }
 
         function toggleLoginPasswordVisibility() {
@@ -492,7 +525,7 @@
                                         <button type="button" onclick="toggleLoginPasswordVisibility()" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs px-1" title="Show / Hide Password">👁️</button>
                                     </div>
                                     ${loginErrorMessage ? `<p id="loginErrorBox" class="text-xs text-rose-400 bg-rose-950/50 border border-rose-500/30 px-3 py-2 rounded-xl">${escapeAttr(loginErrorMessage)}</p>` : ''}
-                                    <button onclick="handleAdminLogin()" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 rounded-xl transition shadow-lg shadow-indigo-600/30">Login to Admin Panel</button>
+                                    <button type="button" onclick="window.handleAdminLogin()" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 rounded-xl transition shadow-lg shadow-indigo-600/30">Login to Admin Panel</button>
                                 </div>
                             </div>
 
@@ -510,7 +543,7 @@
                                         ${appData.members.map(m => `<option value="${escapeAttr(m.name)}">${escapeAttr(m.name)}</option>`).join('')}
                                     </select>
                                     <input type="password" id="memberPin" maxlength="8" placeholder="Apna Personal PIN Dalein" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500">
-                                    <button onclick="handleMemberLogin()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 rounded-xl transition shadow-lg shadow-emerald-600/30">Verify PIN & View My Account</button>
+                                    <button type="button" onclick="window.handleMemberLogin()" class="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 rounded-xl transition shadow-lg shadow-emerald-600/30">Verify PIN & View My Account</button>
                                 </div>
                             </div>
                         </div>
@@ -520,72 +553,82 @@
         }
 
         function handleAdminLogin() {
-            const uEl = document.getElementById('adminUser');
-            const pEl = document.getElementById('adminPass');
-            const u = (uEl ? uEl.value : "").trim();
-            const p = (pEl ? pEl.value : "").trim();
+            try {
+                const uEl = document.getElementById('adminUser');
+                const pEl = document.getElementById('adminPass');
+                const u = (uEl ? uEl.value : "").trim();
+                const p = (pEl ? pEl.value : "").trim();
 
-            normalizeAdminAccounts();
-            const candidatePool = [
-                ...(Array.isArray(appData.adminAccounts) ? appData.adminAccounts : []),
-                ...defaultAdminAccounts
-            ];
+                normalizeAdminAccounts();
+                const candidatePool = [
+                    ...(Array.isArray(appData.adminAccounts) ? appData.adminAccounts : []),
+                    ...defaultAdminAccounts
+                ];
 
-            let matched = candidatePool.find(acc =>
-                String(acc.username || "").trim().toLowerCase() === u.toLowerCase() &&
-                String(acc.password || "").trim() === p
-            );
+                let matched = candidatePool.find(acc =>
+                    String(acc.username || "").trim().toLowerCase() === u.toLowerCase() &&
+                    String(acc.password || "").trim() === p
+                );
 
-            if (!matched && appData.adminCreds) {
-                if (
-                    String(appData.adminCreds.username || "").trim().toLowerCase() === u.toLowerCase() &&
-                    String(appData.adminCreds.password || "").trim() === p
-                ) {
-                    matched = {
-                        id: "main_admin",
-                        username: String(appData.adminCreds.username || "admin").trim(),
-                        password: String(appData.adminCreds.password || "").trim(),
-                        displayName: String(appData.adminCreds.displayName || "Main Admin").trim(),
-                        adminLevel: "main"
+                if (!matched && appData.adminCreds) {
+                    if (
+                        String(appData.adminCreds.username || "").trim().toLowerCase() === u.toLowerCase() &&
+                        String(appData.adminCreds.password || "").trim() === p
+                    ) {
+                        matched = {
+                            id: "main_admin",
+                            username: String(appData.adminCreds.username || "admin").trim(),
+                            password: String(appData.adminCreds.password || "").trim(),
+                            displayName: String(appData.adminCreds.displayName || "Main Admin").trim(),
+                            adminLevel: "main"
+                        };
+                    }
+                }
+
+                if (matched) {
+                    loginErrorMessage = "";
+                    const normalizedMatched = {
+                        id: matched.id || (matched.adminLevel === "main" ? "main_admin" : "co_admin_1"),
+                        username: String(matched.username || u).trim(),
+                        password: String(matched.password || p).trim(),
+                        displayName: String(matched.displayName || "Admin").trim(),
+                        adminLevel: matched.adminLevel === "main" ? "main" : "co"
                     };
+
+                    const existingIdx = appData.adminAccounts.findIndex(a => a.id === normalizedMatched.id || a.username.toLowerCase() === normalizedMatched.username.toLowerCase());
+                    if (existingIdx !== -1) {
+                        appData.adminAccounts[existingIdx] = normalizedMatched;
+                    }
+
+                    appData.currentUser = {
+                        role: 'admin',
+                        adminId: normalizedMatched.id,
+                        username: normalizedMatched.username,
+                        displayName: normalizedMatched.displayName,
+                        adminLevel: normalizedMatched.adminLevel
+                    };
+                    appData.activeTab = 'dashboard';
+                    sessionState.currentUser = appData.currentUser;
+                    sessionState.activeTab = appData.activeTab;
+                    sessionStorage.setItem(SESSION_KEY, JSON.stringify(sessionState));
+                    recordActivityLog("Settings", `Logged in (${normalizedMatched.displayName} - ${normalizedMatched.adminLevel === 'main' ? 'Main Admin' : 'Co-Admin'})`);
+                    saveAppData();
+                } else {
+                    const userExists = candidatePool.some(acc => String(acc.username || "").trim().toLowerCase() === u.toLowerCase());
+                    loginErrorMessage = !u || !p
+                        ? "Kripya Username aur Password dono dalein."
+                        : (userExists
+                            ? `Username "${u}" ke liye password galat hai.`
+                            : `Username "${u}" nahi mila. Valid usernames: admin, coadmin1, coadmin2.`);
+                    render();
                 }
-            }
-
-            if (matched) {
-                loginErrorMessage = "";
-                const normalizedMatched = {
-                    id: matched.id || (matched.adminLevel === "main" ? "main_admin" : "co_admin_1"),
-                    username: String(matched.username || u).trim(),
-                    password: String(matched.password || p).trim(),
-                    displayName: String(matched.displayName || "Admin").trim(),
-                    adminLevel: matched.adminLevel === "main" ? "main" : "co"
-                };
-
-                const existingIdx = appData.adminAccounts.findIndex(a => a.id === normalizedMatched.id || a.username.toLowerCase() === normalizedMatched.username.toLowerCase());
-                if (existingIdx !== -1) {
-                    appData.adminAccounts[existingIdx] = normalizedMatched;
-                }
-
-                appData.currentUser = {
-                    role: 'admin',
-                    adminId: normalizedMatched.id,
-                    username: normalizedMatched.username,
-                    displayName: normalizedMatched.displayName,
-                    adminLevel: normalizedMatched.adminLevel
-                };
-                appData.activeTab = 'dashboard';
-                recordActivityLog("Settings", `Logged in (${normalizedMatched.displayName} - ${normalizedMatched.adminLevel === 'main' ? 'Main Admin' : 'Co-Admin'})`);
-                saveAppData();
-            } else {
-                const userExists = candidatePool.some(acc => String(acc.username || "").trim().toLowerCase() === u.toLowerCase());
-                loginErrorMessage = !u || !p
-                    ? "Kripya Username aur Password dono dalein."
-                    : (userExists
-                        ? `Username "${u}" ke liye password galat hai.`
-                        : `Username "${u}" nahi mila. Valid usernames: admin, coadmin1, coadmin2.`);
+            } catch (err) {
+                console.error("Login error:", err);
+                loginErrorMessage = "Login process mein error aayi: " + (err && err.message ? err.message : "Unknown error");
                 render();
             }
         }
+        window.handleAdminLogin = handleAdminLogin;
 
         function handleMemberLogin() {
             const name = document.getElementById('selectedMember').value;
@@ -604,6 +647,7 @@
             appData.activeTab = 'dashboard';
             saveSessionOnly();
         }
+        window.handleMemberLogin = handleMemberLogin;
 
         function logout() {
             loginErrorMessage = "";
@@ -1581,41 +1625,45 @@
 
         function initDashboardCharts() {
             setTimeout(() => {
-                const ctx = document.getElementById('financialDonutChart');
-                if (!ctx) return;
-                
-                let totalSavingsCount = 0;
-                Object.keys(appData.savings).forEach(k => {
-                    let val = appData.savings[k];
-                    if (val === true) totalSavingsCount++;
-                    else if (typeof val === 'object' && val.paid) {
-                        totalSavingsCount += (1 + (val.advanceMonths || 0));
-                    }
-                });
-                let totalSavings = totalSavingsCount * 500;
-                let totalInterest = 0;
-                appData.loans.forEach(l => { (l.repayments || []).forEach(r => { if (r.type === 'Interest') totalInterest += r.amount; }); });
-                let totalPenaltiesNet = appData.expenses.reduce((acc, e) => e.type === 'Income' ? acc + e.amount : acc - e.amount, 0);
-
-                if (myChartInstance) myChartInstance.destroy();
-                myChartInstance = new Chart(ctx, {
-                    type: 'doughnut',
-                    data: {
-                        labels: ['Total Savings', 'Interest Income', 'Net Penalties/Extra'],
-                        datasets: [{
-                            data: [totalSavings, totalInterest, totalPenaltiesNet],
-                            backgroundColor: ['#10b981', '#06b6d4', '#6366f1'],
-                            borderWidth: 0
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {
-                            legend: { labels: { color: '#94a3b8', font: { family: 'Poppins', size: 11 } } }
+                try {
+                    const ctx = document.getElementById('financialDonutChart');
+                    if (!ctx || typeof window.Chart !== "function") return;
+                    
+                    let totalSavingsCount = 0;
+                    Object.keys(appData.savings).forEach(k => {
+                        let val = appData.savings[k];
+                        if (val === true) totalSavingsCount++;
+                        else if (typeof val === 'object' && val.paid) {
+                            totalSavingsCount += (1 + (val.advanceMonths || 0));
                         }
-                    }
-                });
+                    });
+                    let totalSavings = totalSavingsCount * 500;
+                    let totalInterest = 0;
+                    appData.loans.forEach(l => { (l.repayments || []).forEach(r => { if (r.type === 'Interest') totalInterest += r.amount; }); });
+                    let totalPenaltiesNet = appData.expenses.reduce((acc, e) => e.type === 'Income' ? acc + e.amount : acc - e.amount, 0);
+
+                    if (myChartInstance) myChartInstance.destroy();
+                    myChartInstance = new window.Chart(ctx, {
+                        type: 'doughnut',
+                        data: {
+                            labels: ['Total Savings', 'Interest Income', 'Net Penalties/Extra'],
+                            datasets: [{
+                                data: [totalSavings, totalInterest, totalPenaltiesNet],
+                                backgroundColor: ['#10b981', '#06b6d4', '#6366f1'],
+                                borderWidth: 0
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            plugins: {
+                                legend: { labels: { color: '#94a3b8', font: { family: 'Poppins', size: 11 } } }
+                            }
+                        }
+                    });
+                } catch (e) {
+                    console.warn("Chart render skipped:", e);
+                }
             }, 100);
         }
 
@@ -2030,7 +2078,7 @@
             activeRepaymentHistoryLoanId = loanId;
             renderRepaymentHistoryBody(loanId);
             document.getElementById('repaymentHistoryModal').classList.remove('hidden');
-            lucide.createIcons();
+            safeRefreshIcons();
         }
 
         function closeRepaymentHistoryModal() {
@@ -2081,7 +2129,7 @@
                     ` : ''}
                 </tr>
             `).join('');
-            lucide.createIcons();
+            safeRefreshIcons();
         }
 
         function deleteRepaymentEntry(loanId, repIdOrIndex) {
