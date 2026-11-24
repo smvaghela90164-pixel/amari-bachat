@@ -112,10 +112,19 @@
         if (!sessionState.viewMode) sessionState.viewMode = "desktop";
         if (sessionState.activeTab === "deadline") sessionState.activeTab = "dashboard";
 
+        const defaultAdminAccounts = [
+            { id: "main_admin", username: "admin", password: "admin123", displayName: "Main Admin", adminLevel: "main" },
+            { id: "co_admin_1", username: "coadmin1", password: "coadmin123", displayName: "Co-Admin 1", adminLevel: "co" },
+            { id: "co_admin_2", username: "coadmin2", password: "coadmin123", displayName: "Co-Admin 2", adminLevel: "co" }
+        ];
+
         const defaultSharedData = {
             adminCreds: { username: "admin", password: "admin123", displayName: "Main Admin", role: "Super Admin" },
+            adminAccounts: defaultAdminAccounts,
             adminBalances: [
-                { id: 1, name: "Main Admin", amount: 0 }
+                { id: 1, name: "Main Admin", amount: 0 },
+                { id: 2, name: "Co-Admin 1", amount: 0 },
+                { id: 3, name: "Co-Admin 2", amount: 0 }
             ],
             currentMonth: "2026-11",
             members: [
@@ -136,6 +145,22 @@
         let activityFilterCategory = "ALL";
         let activitySearchQuery = "";
 
+        function isAnyAdminUser(user = appData.currentUser) {
+            return Boolean(user && user.role === "admin");
+        }
+
+        function isMainAdminUser(user = appData.currentUser) {
+            return Boolean(user && user.role === "admin" && user.adminLevel === "main");
+        }
+
+        function getActiveAdminName(user = appData.currentUser) {
+            if (!user || user.role !== "admin") return "Admin";
+            if (user.displayName) return user.displayName;
+            const found = (appData.adminAccounts || []).find(a => a.username === user.username);
+            if (found && found.displayName) return found.displayName;
+            return (appData.adminCreds && appData.adminCreds.displayName) || "Admin";
+        }
+
         function formatExactDateTime(d = new Date()) {
             const pad = (n) => String(n).padStart(2, "0");
             const day = pad(d.getDate());
@@ -155,7 +180,7 @@
             if (!Array.isArray(appData.activityLogs)) appData.activityLogs = [];
             const actorName = appData.currentUser
                 ? (appData.currentUser.role === 'admin'
-                    ? `Admin (${appData.adminCreds && appData.adminCreds.displayName ? appData.adminCreds.displayName : 'Admin'})`
+                    ? `Admin (${getActiveAdminName(appData.currentUser)}${appData.currentUser.adminLevel === 'main' ? ' - Main' : ' - Co-Admin'})`
                     : `Member (${appData.currentUser.name})`)
                 : "System";
 
@@ -216,12 +241,56 @@
             activeTab: sessionState.activeTab
         };
 
+        function normalizeAdminAccounts() {
+            const baseCreds = appData.adminCreds || defaultSharedData.adminCreds;
+            let accounts = Array.isArray(appData.adminAccounts) && appData.adminAccounts.length > 0
+                ? appData.adminAccounts.map((acc, idx) => ({
+                    id: acc.id || (idx === 0 ? "main_admin" : `co_admin_${idx}`),
+                    username: String(acc.username || "").trim(),
+                    password: String(acc.password || ""),
+                    displayName: String(acc.displayName || (idx === 0 ? "Main Admin" : `Co-Admin ${idx}`)).trim(),
+                    adminLevel: idx === 0 || acc.adminLevel === "main" ? "main" : "co"
+                }))
+                : defaultAdminAccounts.map(a => ({ ...a }));
+
+            let mainIdx = accounts.findIndex(a => a.adminLevel === "main");
+            if (mainIdx === -1) mainIdx = 0;
+            accounts[mainIdx].adminLevel = "main";
+            if (baseCreds.username) accounts[mainIdx].username = baseCreds.username;
+            if (baseCreds.password) accounts[mainIdx].password = baseCreds.password;
+            if (baseCreds.displayName) accounts[mainIdx].displayName = baseCreds.displayName;
+
+            const mainAcc = accounts[mainIdx];
+            accounts.splice(mainIdx, 1);
+            accounts.unshift(mainAcc);
+
+            const coAdmins = accounts.filter(a => a.adminLevel === "co");
+            const defaultCo1 = defaultAdminAccounts[1];
+            const defaultCo2 = defaultAdminAccounts[2];
+
+            const finalCo1 = coAdmins[0] || { ...defaultCo1 };
+            const finalCo2 = coAdmins[1] || { ...defaultCo2 };
+
+            appData.adminAccounts = [mainAcc, finalCo1, finalCo2];
+            appData.adminCreds = {
+                username: mainAcc.username,
+                password: mainAcc.password,
+                displayName: mainAcc.displayName,
+                role: "Super Admin"
+            };
+        }
+
         function normalizeAppData() {
             delete appData.paymentSettings;
             delete appData.whatsappTemplates;
-            if (!appData.adminCreds) appData.adminCreds = defaultSharedData.adminCreds;
+            normalizeAdminAccounts();
+
             if (!Array.isArray(appData.adminBalances) || appData.adminBalances.length === 0) {
-                appData.adminBalances = [{ id: 1, name: appData.adminCreds.displayName || "Main Admin", amount: 0 }];
+                appData.adminBalances = [
+                    { id: 1, name: appData.adminAccounts[0].displayName, amount: 0 },
+                    { id: 2, name: appData.adminAccounts[1].displayName, amount: 0 },
+                    { id: 3, name: appData.adminAccounts[2].displayName, amount: 0 }
+                ];
             }
             if (!appData.currentMonth) appData.currentMonth = "2026-11";
             if (!Array.isArray(appData.members)) appData.members = defaultSharedData.members;
@@ -232,6 +301,22 @@
             if (!Array.isArray(appData.activityLogs)) appData.activityLogs = [];
             if (appData.activityLogs.length > MAX_ACTIVITY_LOGS) {
                 appData.activityLogs = appData.activityLogs.slice(0, MAX_ACTIVITY_LOGS);
+            }
+
+            if (appData.currentUser && appData.currentUser.role === "admin") {
+                const matchedAcc = appData.adminAccounts.find(a =>
+                    (appData.currentUser.adminId && a.id === appData.currentUser.adminId) ||
+                    (appData.currentUser.username && a.username === appData.currentUser.username)
+                );
+                if (matchedAcc) {
+                    appData.currentUser.adminId = matchedAcc.id;
+                    appData.currentUser.username = matchedAcc.username;
+                    appData.currentUser.displayName = matchedAcc.displayName;
+                    appData.currentUser.adminLevel = matchedAcc.adminLevel;
+                } else if (!appData.currentUser.adminLevel) {
+                    appData.currentUser.adminLevel = "main";
+                    appData.currentUser.displayName = appData.adminAccounts[0].displayName;
+                }
             }
 
             appData.loans.forEach(l => {
@@ -271,6 +356,7 @@
         function getSharedPayload() {
             return {
                 adminCreds: appData.adminCreds,
+                adminAccounts: appData.adminAccounts,
                 adminBalances: appData.adminBalances,
                 currentMonth: appData.currentMonth,
                 members: appData.members,
@@ -315,7 +401,7 @@
                 sessionState.activeTab = "dashboard";
                 appData.activeTab = "dashboard";
             }
-            if (sessionState.activeTab === "activity" && (!appData.currentUser || appData.currentUser.role !== "admin")) {
+            if (sessionState.activeTab === "activity" && !isMainAdminUser()) {
                 sessionState.activeTab = "dashboard";
                 appData.activeTab = "dashboard";
             }
@@ -343,7 +429,7 @@
                 if (appData.activeTab === "deadline") {
                     appData.activeTab = "dashboard";
                 }
-                if (appData.activeTab === "activity" && appData.currentUser.role !== "admin") {
+                if (appData.activeTab === "activity" && !isMainAdminUser()) {
                     appData.activeTab = "dashboard";
                     sessionState.activeTab = "dashboard";
                     sessionStorage.setItem(SESSION_KEY, JSON.stringify(sessionState));
@@ -376,11 +462,11 @@
 
                         <div class="space-y-6 text-left">
                             <div class="bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50">
-                                <h3 class="font-semibold text-indigo-300 mb-3 flex items-center gap-2"><i data-lucide="user-cog" class="w-5 h-5"></i> Admin Login</h3>
+                                <h3 class="font-semibold text-indigo-300 mb-3 flex items-center gap-2"><i data-lucide="user-cog" class="w-5 h-5"></i> Admin / Co-Admin Login</h3>
                                 <div class="space-y-3">
-                                    <input type="text" id="adminUser" placeholder="Username" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500">
+                                    <input type="text" id="adminUser" placeholder="Admin / Co-Admin Username" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500">
                                     <input type="password" id="adminPass" placeholder="Password" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500">
-                                    <button onclick="handleAdminLogin()" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 rounded-xl transition shadow-lg shadow-indigo-600/30">Login as Admin</button>
+                                    <button onclick="handleAdminLogin()" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 rounded-xl transition shadow-lg shadow-indigo-600/30">Login to Admin Panel</button>
                                 </div>
                             </div>
 
@@ -408,12 +494,21 @@
         }
 
         function handleAdminLogin() {
-            const u = document.getElementById('adminUser').value;
+            const u = document.getElementById('adminUser').value.trim();
             const p = document.getElementById('adminPass').value;
-            if (u === appData.adminCreds.username && p === appData.adminCreds.password) {
-                appData.currentUser = { role: 'admin' };
+            normalizeAdminAccounts();
+            const matched = appData.adminAccounts.find(acc => acc.username === u && acc.password === p);
+            if (matched) {
+                appData.currentUser = {
+                    role: 'admin',
+                    adminId: matched.id,
+                    username: matched.username,
+                    displayName: matched.displayName,
+                    adminLevel: matched.adminLevel
+                };
                 appData.activeTab = 'dashboard';
-                saveSessionOnly();
+                recordActivityLog("Settings", `Logged in (${matched.displayName} - ${matched.adminLevel === 'main' ? 'Main Admin' : 'Co-Admin'})`);
+                saveAppData();
             } else {
                 alert('Galat Username ya Password!');
             }
@@ -442,8 +537,15 @@
         }
 
         function renderMainApp() {
-            const isAdmin = appData.currentUser.role === 'admin';
+            const isAdmin = isAnyAdminUser();
+            const isMainAdmin = isMainAdminUser();
+            const activeAdminLabel = getActiveAdminName();
             const isDesktopMode = sessionState.viewMode === "desktop";
+
+            const mainAcc = appData.adminAccounts[0] || defaultAdminAccounts[0];
+            const coAcc1 = appData.adminAccounts[1] || defaultAdminAccounts[1];
+            const coAcc2 = appData.adminAccounts[2] || defaultAdminAccounts[2];
+
             return `
                 <header class="bg-slate-900/80 backdrop-blur-xl border border-slate-800 rounded-2xl p-4 mb-6 flex flex-wrap justify-between items-center gap-4 shadow-xl">
                     <div class="flex items-center gap-3 bg-slate-800/80 px-4 py-2 rounded-2xl border border-emerald-500/30 shadow-inner">
@@ -452,7 +554,7 @@
                         </div>
                         <div>
                             <h1 class="text-sm md:text-base font-bold text-emerald-300 tracking-wider">અમારી બચત <span class="text-amber-400">|</span> અમારી સુરક્ષા</h1>
-                            <p class="text-[11px] text-slate-400">${isAdmin ? '👑 Admin: ' + escapeAttr(appData.adminCreds.displayName) : '🔒 Member: ' + escapeAttr(appData.currentUser.name)}</p>
+                            <p class="text-[11px] text-slate-400">${isAdmin ? (isMainAdmin ? '👑 Main Admin: ' + escapeAttr(activeAdminLabel) : '🛡️ Co-Admin: ' + escapeAttr(activeAdminLabel)) : '🔒 Member: ' + escapeAttr(appData.currentUser.name)}</p>
                         </div>
                     </div>
 
@@ -463,12 +565,12 @@
                         <button onclick="setTab('expenses')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'expenses' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Penalties</button>
                         <button onclick="setTab('audit')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'audit' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Audit</button>
                         <button onclick="setTab('queries')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'queries' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Chat</button>
-                        ${isAdmin ? `<button onclick="setTab('activity')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'activity' ? 'bg-amber-500 text-slate-950 font-bold shadow-lg shadow-amber-500/30' : 'bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500 hover:text-slate-950'}">📋 Activity Log</button>` : ''}
+                        ${isMainAdmin ? `<button onclick="setTab('activity')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'activity' ? 'bg-amber-500 text-slate-950 font-bold shadow-lg shadow-amber-500/30' : 'bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500 hover:text-slate-950'}">📋 Activity Log</button>` : ''}
                         <button onclick="toggleViewMode()" class="px-3 py-2 rounded-xl text-xs font-medium bg-cyan-600/20 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-600 hover:text-white transition flex items-center gap-1.5" title="Toggle Desktop / Mobile Screen Layout">
                             <i data-lucide="${isDesktopMode ? 'smartphone' : 'monitor'}" class="w-4 h-4"></i>
                             ${isDesktopMode ? 'Mobile View' : 'Desktop View'}
                         </button>
-                        ${isAdmin ? `<button onclick="openSettingsModal()" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition" title="Admin Settings"><i data-lucide="settings" class="w-5 h-5"></i></button>` : ''}
+                        ${isMainAdmin ? `<button onclick="openSettingsModal()" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition" title="Main Admin Settings"><i data-lucide="settings" class="w-5 h-5"></i></button>` : ''}
                         <button onclick="logout()" class="px-3 py-2 bg-rose-600/20 text-rose-400 hover:bg-rose-600 hover:text-white rounded-xl text-xs font-medium transition" title="Logout"><i data-lucide="log-out" class="w-4 h-4"></i></button>
                     </div>
                 </header>
@@ -480,7 +582,7 @@
                     ${appData.activeTab === 'expenses' ? renderExpensesTab() : ''}
                     ${appData.activeTab === 'audit' ? renderAuditTab() : ''}
                     ${appData.activeTab === 'queries' ? renderQueriesTab() : ''}
-                    ${appData.activeTab === 'activity' && isAdmin ? renderActivityLogTab() : ''}
+                    ${appData.activeTab === 'activity' && isMainAdmin ? renderActivityLogTab() : ''}
                 </main>
 
                 <!-- Admin Amount Add / Edit Modal -->
@@ -503,26 +605,63 @@
                     </div>
                 </div>
 
-                <!-- Admin Settings Modal -->
+                <!-- Main Admin Settings Modal (Main Admin + 2 Co-Admins) -->
                 <div id="settingsModal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in overflow-y-auto">
-                    <div class="bg-slate-900 border border-slate-800 p-6 rounded-3xl w-full max-w-lg space-y-4 shadow-2xl animate-scale-in my-8">
+                    <div class="bg-slate-900 border border-slate-800 p-6 rounded-3xl w-full max-w-2xl space-y-4 shadow-2xl animate-scale-in my-8">
                         <div class="flex items-center gap-2 text-white">
                             <i data-lucide="settings" class="w-5 h-5 text-indigo-400"></i>
-                            <h3 class="text-lg font-bold">Admin Account & App Settings</h3>
+                            <h3 class="text-lg font-bold">Main Admin & Co-Admins Settings</h3>
                         </div>
-                        <div class="space-y-3">
-                            <div>
-                                <label class="text-xs text-slate-300 mb-1 block">Admin Name</label>
-                                <input type="text" id="newAdminName" value="${escapeAttr(appData.adminCreds.displayName)}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
-                            </div>
-                            <div class="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label class="text-xs text-slate-300 mb-1 block">Username</label>
-                                    <input type="text" id="newAdminUser" value="${escapeAttr(appData.adminCreds.username)}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
+                        <div class="space-y-4">
+                            <div class="bg-slate-800/40 border border-indigo-500/30 p-3.5 rounded-2xl space-y-2.5">
+                                <h4 class="text-xs font-bold text-indigo-300 uppercase">👑 Main Admin (Full Access)</h4>
+                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                                    <div>
+                                        <label class="text-[11px] text-slate-400 mb-1 block">Name</label>
+                                        <input type="text" id="newAdminName" value="${escapeAttr(mainAcc.displayName)}" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="text-[11px] text-slate-400 mb-1 block">Username</label>
+                                        <input type="text" id="newAdminUser" value="${escapeAttr(mainAcc.username)}" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="text-[11px] text-slate-400 mb-1 block">Password</label>
+                                        <input type="password" id="newAdminPass" value="${escapeAttr(mainAcc.password)}" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none">
+                                    </div>
                                 </div>
-                                <div>
-                                    <label class="text-xs text-slate-300 mb-1 block">Password</label>
-                                    <input type="password" id="newAdminPass" value="${escapeAttr(appData.adminCreds.password)}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
+                            </div>
+
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div class="bg-slate-800/40 border border-slate-700/70 p-3.5 rounded-2xl space-y-2">
+                                    <h4 class="text-xs font-bold text-cyan-300">🛡️ Co-Admin 1 (Limited Access)</h4>
+                                    <div>
+                                        <label class="text-[11px] text-slate-400 mb-1 block">Name</label>
+                                        <input type="text" id="coAdmin1Name" value="${escapeAttr(coAcc1.displayName)}" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="text-[11px] text-slate-400 mb-1 block">Username</label>
+                                        <input type="text" id="coAdmin1User" value="${escapeAttr(coAcc1.username)}" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="text-[11px] text-slate-400 mb-1 block">Password</label>
+                                        <input type="password" id="coAdmin1Pass" value="${escapeAttr(coAcc1.password)}" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none">
+                                    </div>
+                                </div>
+
+                                <div class="bg-slate-800/40 border border-slate-700/70 p-3.5 rounded-2xl space-y-2">
+                                    <h4 class="text-xs font-bold text-cyan-300">🛡️ Co-Admin 2 (Limited Access)</h4>
+                                    <div>
+                                        <label class="text-[11px] text-slate-400 mb-1 block">Name</label>
+                                        <input type="text" id="coAdmin2Name" value="${escapeAttr(coAcc2.displayName)}" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="text-[11px] text-slate-400 mb-1 block">Username</label>
+                                        <input type="text" id="coAdmin2User" value="${escapeAttr(coAcc2.username)}" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="text-[11px] text-slate-400 mb-1 block">Password</label>
+                                        <input type="password" id="coAdmin2Pass" value="${escapeAttr(coAcc2.password)}" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none">
+                                    </div>
                                 </div>
                             </div>
 
@@ -562,11 +701,14 @@
             appData.activeTab = tab === "deadline" ? "dashboard" : tab;
             saveSessionOnly();
         }
-        function openSettingsModal() { document.getElementById('settingsModal').classList.remove('hidden'); }
+        function openSettingsModal() {
+            if (!isMainAdminUser()) { alert('Sirf Main Admin hi Settings khol sakta hai!'); return; }
+            document.getElementById('settingsModal').classList.remove('hidden');
+        }
         function closeSettingsModal() { document.getElementById('settingsModal').classList.add('hidden'); }
 
         function renderActivityLogTab() {
-            if (!appData.currentUser || appData.currentUser.role !== 'admin') return "";
+            if (!isMainAdminUser()) return "";
             const logs = Array.isArray(appData.activityLogs) ? appData.activityLogs : [];
             const categories = ["ALL", "Admin Amount", "Member", "Savings", "Loan", "Penalty", "Settings", "Chat"];
 
@@ -589,7 +731,7 @@
                                 <i data-lucide="clipboard-list" class="w-5 h-5 text-amber-400"></i>
                                 અમારી બચત | અમારી સુરક્ષા - Activity & Update Log
                             </h2>
-                            <p class="text-xs text-slate-400">Har update ka exact din aur samay (Latest ${MAX_ACTIVITY_LOGS} entries saved). Sirf Admin ke liye uplabdh.</p>
+                            <p class="text-xs text-slate-400">Main Admin aur Co-Admins ke har update ka exact din, samay aur naam (Latest ${MAX_ACTIVITY_LOGS} entries saved).</p>
                         </div>
                         <div class="flex items-center gap-2">
                             <span class="px-3 py-1.5 rounded-xl bg-slate-800 border border-slate-700 text-xs text-amber-300 font-semibold">
@@ -609,7 +751,7 @@
                                 </button>
                             `).join('')}
                         </div>
-                        <input type="text" value="${escapeAttr(activitySearchQuery)}" oninput="setActivitySearchQuery(this.value)" placeholder="Search date, time, member, amount..." class="w-full sm:w-64 bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500">
+                        <input type="text" value="${escapeAttr(activitySearchQuery)}" oninput="setActivitySearchQuery(this.value)" placeholder="Search admin, date, time, member, amount..." class="w-full sm:w-64 bg-slate-900 border border-slate-700 rounded-xl px-3.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500">
                     </div>
 
                     <div class="overflow-x-auto">
@@ -658,7 +800,7 @@
         }
 
         function downloadActivityLogPDF() {
-            if (!appData.currentUser || appData.currentUser.role !== 'admin') return;
+            if (!isMainAdminUser()) return;
             const jsPDFRef = window.jspdf && window.jspdf.jsPDF;
             if (!jsPDFRef) {
                 alert("PDF library load nahi hui, page refresh karke try karein.");
@@ -706,7 +848,7 @@
         }
 
         function openAdminBalanceModal(id = null) {
-            if (appData.currentUser.role !== 'admin') return;
+            if (!isAnyAdminUser()) return;
             if (id) {
                 const entry = appData.adminBalances.find(a => a.id === id);
                 if (!entry) return;
@@ -728,7 +870,7 @@
         }
 
         function saveAdminBalanceEntry() {
-            if (appData.currentUser.role !== 'admin') return;
+            if (!isAnyAdminUser()) return;
             const idVal = document.getElementById('editAdminBalanceId').value;
             const nameVal = document.getElementById('adminBalanceName').value.trim();
             const amountVal = parseFloat(document.getElementById('adminBalanceAmount').value);
@@ -760,7 +902,7 @@
         }
 
         function deleteAdminBalanceEntry(id) {
-            if (appData.currentUser.role !== 'admin') return;
+            if (!isMainAdminUser()) { alert('Sirf Main Admin hi admin balance entry delete kar sakta hai!'); return; }
             if (appData.adminBalances.length <= 1) {
                 alert('Kam se kam ek admin entry honi chahiye.');
                 return;
@@ -774,17 +916,41 @@
         }
 
         function saveAdminSettings() {
+            if (!isMainAdminUser()) { alert('Sirf Main Admin hi settings update kar sakta hai!'); return; }
             let newName = document.getElementById('newAdminName').value.trim();
             let newU = document.getElementById('newAdminUser').value.trim();
             let newP = document.getElementById('newAdminPass').value.trim();
 
-            if (!newU || !newP || !newName) { alert('Sabhi fields bharein.'); return; }
-            appData.adminCreds.displayName = newName;
-            appData.adminCreds.username = newU;
-            appData.adminCreds.password = newP;
+            let co1Name = document.getElementById('coAdmin1Name').value.trim();
+            let co1User = document.getElementById('coAdmin1User').value.trim();
+            let co1Pass = document.getElementById('coAdmin1Pass').value.trim();
 
-            recordActivityLog("Settings", `Updated Admin Settings (Name: ${newName}, Username: ${newU})`);
-            alert('Settings updated & synced to cloud!');
+            let co2Name = document.getElementById('coAdmin2Name').value.trim();
+            let co2User = document.getElementById('coAdmin2User').value.trim();
+            let co2Pass = document.getElementById('coAdmin2Pass').value.trim();
+
+            if (!newU || !newP || !newName || !co1Name || !co1User || !co1Pass || !co2Name || !co2User || !co2Pass) {
+                alert('Main Admin aur dono Co-Admins ke sabhi fields bharein.');
+                return;
+            }
+
+            const usernames = [newU, co1User, co2User];
+            if (new Set(usernames).size < 3) {
+                alert('Main Admin aur dono Co-Admins ke usernames alag hone chahiye.');
+                return;
+            }
+
+            appData.adminAccounts = [
+                { id: "main_admin", username: newU, password: newP, displayName: newName, adminLevel: "main" },
+                { id: "co_admin_1", username: co1User, password: co1Pass, displayName: co1Name, adminLevel: "co" },
+                { id: "co_admin_2", username: co2User, password: co2Pass, displayName: co2Name, adminLevel: "co" }
+            ];
+            appData.adminCreds = { username: newU, password: newP, displayName: newName, role: "Super Admin" };
+            appData.currentUser.displayName = newName;
+            appData.currentUser.username = newU;
+
+            recordActivityLog("Settings", `Updated Main Admin (${newName}) and Co-Admins (${co1Name}, ${co2Name}) credentials`);
+            alert('Main Admin & Co-Admins settings updated & synced to cloud!');
             closeSettingsModal();
             saveAppData();
         }
@@ -800,6 +966,7 @@
         }
 
         function importBackupJSON() {
+            if (!isMainAdminUser()) { alert('Sirf Main Admin hi backup restore kar sakta hai!'); return; }
             const fileInput = document.getElementById('importFile');
             if (!fileInput.files || fileInput.files.length === 0) {
                 alert('Kripya pehle ek JSON backup file select karein!');
@@ -1087,6 +1254,7 @@
         }
 
         function autoApplyLatePenalties() {
+            if (!isAnyAdminUser()) return;
             let count = 0;
             const appliedNames = [];
             appData.members.forEach(m => {
@@ -1115,7 +1283,8 @@
         }
 
         function renderDashboard() {
-            const isAdmin = appData.currentUser.role === 'admin';
+            const isAdmin = isAnyAdminUser();
+            const isMainAdmin = isMainAdminUser();
             const memberName = isAdmin ? null : appData.currentUser.name;
             const memberObj = isAdmin ? null : appData.members.find(m => m.name === memberName);
 
@@ -1291,7 +1460,7 @@
                                                 <button onclick="openAdminBalanceModal(${a.id})" class="px-3 py-1.5 bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white rounded-lg text-xs font-medium transition inline-flex items-center gap-1">
                                                     <i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Edit
                                                 </button>
-                                                ${appData.adminBalances.length > 1 ? `
+                                                ${isMainAdmin && appData.adminBalances.length > 1 ? `
                                                     <button onclick="deleteAdminBalanceEntry(${a.id})" class="px-2.5 py-1.5 bg-rose-600/20 text-rose-400 hover:bg-rose-600 hover:text-white rounded-lg text-xs font-medium transition inline-flex items-center gap-1" title="Delete">
                                                         <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                                                     </button>
@@ -1376,7 +1545,8 @@
         }
 
         function renderMembersTab() {
-            const isAdmin = appData.currentUser.role === 'admin';
+            const isAdmin = isAnyAdminUser();
+            const isMainAdmin = isMainAdminUser();
             const memberName = isAdmin ? null : appData.currentUser.name;
             const membersList = isAdmin ? appData.members : appData.members.filter(m => m.name === memberName);
 
@@ -1401,7 +1571,7 @@
                                     <th class="p-3">Photo & Name</th>
                                     <th class="p-3">Age</th>
                                     <th class="p-3">Phone</th>
-                                    ${isAdmin ? `<th class="p-3">PIN</th>` : ''}
+                                    ${isMainAdmin ? `<th class="p-3">PIN</th>` : ''}
                                     <th class="p-3">Join Month</th>
                                     <th class="p-3">${formatMonthMMYYYY(appData.currentMonth)} Status</th>
                                     <th class="p-3">Total Savings</th>
@@ -1435,7 +1605,7 @@
                                             </td>
                                             <td class="p-3 text-slate-300">${m.age || 'N/A'} yrs</td>
                                             <td class="p-3 text-slate-300">${escapeAttr(m.phone)}</td>
-                                            ${isAdmin ? `<td class="p-3 font-mono text-amber-300 text-xs">${escapeAttr(m.pin || '1234')}</td>` : ''}
+                                            ${isMainAdmin ? `<td class="p-3 font-mono text-amber-300 text-xs">${escapeAttr(m.pin || '1234')}</td>` : ''}
                                             <td class="p-3 text-indigo-300 text-xs font-medium">${formatMonthMMYYYY(m.joinMonth || '2026-01')}</td>
                                             <td class="p-3">
                                                 <span class="px-3 py-1 rounded-full text-xs font-semibold ${isPaid ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}">
@@ -1450,7 +1620,9 @@
                                                     </button>
                                                     <button onclick="openAdvanceModal(${m.id}, '${escapeAttr(m.name)}')" class="px-2.5 py-1.5 bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600 hover:text-white rounded-lg text-xs font-medium transition" title="Pay Advance">Advance ⚡</button>
                                                     <button onclick="openMemberModal(${m.id})" class="p-1.5 bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white rounded-lg text-xs transition" title="Edit"><i data-lucide="edit-3" class="w-4 h-4"></i></button>
-                                                    <button onclick="deleteMember(${m.id}, '${escapeAttr(m.name)}')" class="p-1.5 bg-rose-600/20 text-rose-400 hover:bg-rose-600 hover:text-white rounded-lg text-xs transition" title="Delete"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                                                    ${isMainAdmin ? `
+                                                        <button onclick="deleteMember(${m.id}, '${escapeAttr(m.name)}')" class="p-1.5 bg-rose-600/20 text-rose-400 hover:bg-rose-600 hover:text-white rounded-lg text-xs transition" title="Delete"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                                                    ` : ''}
                                                 ` : ''}
                                                 <button onclick="downloadMemberPassbookPDF(${m.id})" class="px-2.5 py-1.5 bg-purple-600/20 text-purple-400 hover:bg-purple-600 hover:text-white rounded-lg text-xs font-medium transition" title="Passbook"><i data-lucide="book-open" class="w-3.5 h-3.5 inline"></i> Passbook</button>
                                             </td>
@@ -1642,7 +1814,7 @@
         }
         
         function toggleSavings(id) {
-            if (appData.currentUser.role !== 'admin') { alert('Sirf Admin hi status change kar sakta hai!'); return; }
+            if (!isAnyAdminUser()) { alert('Sirf Admin ya Co-Admin hi status change kar sakta hai!'); return; }
             const member = appData.members.find(m => m.id === id);
             const mLabel = member ? member.name : `Member #${id}`;
             let key = `${appData.currentMonth}_${id}`;
@@ -1660,7 +1832,7 @@
         }
 
         function openAdvanceModal(id, name) {
-            if (appData.currentUser.role !== 'admin') return;
+            if (!isAnyAdminUser()) return;
             document.getElementById('advMemberId').value = id;
             document.getElementById('advMemberNameDisplay').innerText = `Member: ${name} (Current Month: ${formatMonthMMYYYY(appData.currentMonth)})`;
             document.getElementById('advMonthsCount').value = "1";
@@ -1668,6 +1840,7 @@
         }
         function closeAdvanceModal() { document.getElementById('advanceModal').classList.add('hidden'); }
         function saveAdvancePayment() {
+            if (!isAnyAdminUser()) return;
             let id = parseInt(document.getElementById('advMemberId').value);
             let advMonths = parseInt(document.getElementById('advMonthsCount').value) || 1;
             const member = appData.members.find(m => m.id === id);
@@ -1682,7 +1855,7 @@
         }
 
         function openMemberModal(id = null) {
-            if (appData.currentUser.role !== 'admin') return;
+            if (!isAnyAdminUser()) return;
             const fileInput = document.getElementById('memberInputPhotoFile');
             if (fileInput) fileInput.value = "";
             const statusEl = document.getElementById('memberPhotoStatus');
@@ -1719,6 +1892,7 @@
         function closeMemberModal() { document.getElementById('memberModal').classList.add('hidden'); }
 
         function saveMemberData() {
+            if (!isAnyAdminUser()) return;
             let id = document.getElementById('editMemberId').value;
             let name = document.getElementById('memberInputName').value.trim();
             let age = parseInt(document.getElementById('memberInputAge').value) || 25;
@@ -1753,7 +1927,7 @@
         }
 
         function deleteMember(id, name) {
-            if (appData.currentUser.role !== 'admin') return;
+            if (!isMainAdminUser()) { alert('Sirf Main Admin hi member delete kar sakta hai!'); return; }
             if (confirm(`Kya aap "${name}" ko delete karna chahte hain?`)) {
                 appData.members = appData.members.filter(m => m.id !== id);
                 recordActivityLog("Member", `Deleted member: ${name} (ID #${id})`);
@@ -1763,7 +1937,7 @@
         }
 
         function deleteLoan(id) {
-            if (appData.currentUser.role !== 'admin') return;
+            if (!isMainAdminUser()) { alert('Sirf Main Admin hi loan delete kar sakta hai!'); return; }
             if (confirm('Kya aap is loan entry ko delete karna chahte hain? (Principal aur Interest repayments mein koi badlav nahi hoga aur loan Deleted Items mein dikhega.)')) {
                 const loan = appData.loans.find(l => l.id === id);
                 if (loan) {
@@ -1796,7 +1970,7 @@
             const tbodyEl = document.getElementById('repaymentHistoryTbody');
             if (!loan || !titleEl || !summaryEl || !tbodyEl) return;
 
-            const isAdmin = appData.currentUser && appData.currentUser.role === 'admin';
+            const canDeleteRepayment = isMainAdminUser();
             const reps = Array.isArray(loan.repayments) ? loan.repayments : [];
             const totalPrincipal = reps.reduce((s, r) => r.type === 'Principal' ? s + (parseFloat(r.amount) || 0) : s, 0);
             const totalInterest = reps.reduce((s, r) => r.type === 'Interest' ? s + (parseFloat(r.amount) || 0) : s, 0);
@@ -1810,7 +1984,7 @@
             `;
 
             if (reps.length === 0) {
-                tbodyEl.innerHTML = `<tr><td colspan="${isAdmin ? 4 : 3}" class="p-4 text-center text-slate-400 italic">Is loan par abhi koi repayment entry nahi hai.</td></tr>`;
+                tbodyEl.innerHTML = `<tr><td colspan="${canDeleteRepayment ? 4 : 3}" class="p-4 text-center text-slate-400 italic">Is loan par abhi koi repayment entry nahi hai.</td></tr>`;
                 return;
             }
 
@@ -1823,7 +1997,7 @@
                         </span>
                     </td>
                     <td class="p-3 font-bold text-white">₹${r.amount}</td>
-                    ${isAdmin ? `
+                    ${canDeleteRepayment ? `
                         <td class="p-3 text-right">
                             <button onclick="deleteRepaymentEntry(${loan.id}, '${escapeAttr(r.id || idx)}')" class="px-2.5 py-1 bg-rose-600/20 text-rose-400 hover:bg-rose-600 hover:text-white rounded-lg text-xs font-medium transition inline-flex items-center gap-1">
                                 <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Delete
@@ -1836,7 +2010,7 @@
         }
 
         function deleteRepaymentEntry(loanId, repIdOrIndex) {
-            if (appData.currentUser.role !== 'admin') return;
+            if (!isMainAdminUser()) { alert('Sirf Main Admin hi repayment entry delete kar sakta hai!'); return; }
             const loan = appData.loans.find(l => l.id === loanId);
             if (!loan || !Array.isArray(loan.repayments)) return;
 
@@ -1864,7 +2038,7 @@
         }
 
         function openEditLoanModal(id) {
-            if (appData.currentUser.role !== 'admin') return;
+            if (!isMainAdminUser()) { alert('Sirf Main Admin hi loan edit kar sakta hai!'); return; }
             const loan = appData.loans.find(l => l.id === id);
             if (!loan) return;
 
@@ -1885,7 +2059,7 @@
         }
 
         function saveEditedLoan() {
-            if (appData.currentUser.role !== 'admin') return;
+            if (!isMainAdminUser()) { alert('Sirf Main Admin hi loan edit kar sakta hai!'); return; }
             const loanId = parseInt(document.getElementById('editLoanId').value);
             const amount = parseFloat(document.getElementById('editLoanAmount').value);
             const rate = parseFloat(document.getElementById('editLoanRate').value);
@@ -1922,7 +2096,8 @@
         }
 
         function renderLoansTab() {
-            const isAdmin = appData.currentUser.role === 'admin';
+            const isAdmin = isAnyAdminUser();
+            const isMainAdmin = isMainAdminUser();
             const memberName = isAdmin ? null : appData.currentUser.name;
             const allUserLoans = isAdmin ? appData.loans : appData.loans.filter(l => l.memberName === memberName);
             const activeLoansList = allUserLoans.filter(l => !l.deleted);
@@ -1934,7 +2109,7 @@
                         <div class="flex flex-wrap justify-between items-center gap-4">
                             <div>
                                 <h2 class="text-xl font-bold text-white">${isAdmin ? 'અમારી બચત | અમારી સુરક્ષા - Loan Ledger' : 'અમારી બચત | અમારી સુરક્ષા - My Loans'}</h2>
-                                <p class="text-xs text-slate-400">${isAdmin ? 'Active loan row par click karke Principal aur Interest ko edit karein ya Repayments se entries manage karein.' : 'Aapke active ya closed loans.'}</p>
+                                <p class="text-xs text-slate-400">${isAdmin ? 'Naya loan issue karein, repayments add/view karein, aur Main Admin loan edit/delete kar sakta hai.' : 'Aapke active ya closed loans.'}</p>
                             </div>
                             ${isAdmin ? `<button onclick="openLoanModal()" class="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition"><i data-lucide="plus-circle" class="w-4 h-4"></i> Issue New Loan</button>` : ''}
                         </div>
@@ -1963,7 +2138,7 @@
                                         const status = balance <= 0 ? 'Settled' : 'Active';
 
                                         return `
-                                            <tr onclick="${isAdmin && status === 'Active' ? `openEditLoanModal(${l.id})` : ''}" class="hover:bg-slate-800/40 transition ${isAdmin && status === 'Active' ? 'cursor-pointer' : ''}">
+                                            <tr onclick="${isMainAdmin && status === 'Active' ? `openEditLoanModal(${l.id})` : ''}" class="hover:bg-slate-800/40 transition ${isMainAdmin && status === 'Active' ? 'cursor-pointer' : ''}">
                                                 <td class="p-3 font-semibold text-white">${escapeAttr(l.memberName)}</td>
                                                 <td class="p-3 text-indigo-400 font-medium">₹${l.amount}</td>
                                                 <td class="p-3 text-slate-300">${l.rate}% /mo</td>
@@ -1975,15 +2150,15 @@
                                                     </span>
                                                 </td>
                                                 <td onclick="event.stopPropagation()" class="p-3 text-right space-x-2">
-                                                    <button onclick="openRepaymentHistoryModal(${l.id})" class="px-2.5 py-1.5 bg-cyan-600/20 text-cyan-300 hover:bg-cyan-600 hover:text-white rounded-lg text-xs font-medium transition inline-flex items-center gap-1" title="View / Delete Repayments">
+                                                    <button onclick="openRepaymentHistoryModal(${l.id})" class="px-2.5 py-1.5 bg-cyan-600/20 text-cyan-300 hover:bg-cyan-600 hover:text-white rounded-lg text-xs font-medium transition inline-flex items-center gap-1" title="View Repayments">
                                                         <i data-lucide="history" class="w-3.5 h-3.5"></i> Repayments (${(l.repayments || []).length})
                                                     </button>
                                                     ${isAdmin && status === 'Active' ? `
-                                                        <button onclick="openEditLoanModal(${l.id})" class="px-2.5 py-1.5 bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white rounded-lg text-xs font-medium transition">Edit</button>
+                                                        ${isMainAdmin ? `<button onclick="openEditLoanModal(${l.id})" class="px-2.5 py-1.5 bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white rounded-lg text-xs font-medium transition">Edit</button>` : ''}
                                                         <button onclick="openRepaymentModal(${l.id})" class="px-3 py-1.5 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600 hover:text-white rounded-lg text-xs font-medium transition">Add Repayment</button>
                                                     ` : ''}
                                                     <button onclick="downloadPDFReceipt(${l.id})" class="px-2.5 py-1.5 bg-purple-600/20 text-purple-400 hover:bg-purple-600 hover:text-white rounded-lg text-xs font-medium transition" title="Receipt"><i data-lucide="file-text" class="w-3.5 h-3.5"></i></button>
-                                                    ${isAdmin ? `
+                                                    ${isMainAdmin ? `
                                                         <button onclick="deleteLoan(${l.id})" class="px-2.5 py-1.5 bg-rose-600/20 text-rose-400 hover:bg-rose-600 hover:text-white rounded-lg text-xs font-medium transition inline-flex items-center gap-1" title="Delete Loan"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Delete</button>
                                                     ` : ''}
                                                 </td>
@@ -2060,7 +2235,7 @@
                                         <th class="p-3">Date</th>
                                         <th class="p-3">Type</th>
                                         <th class="p-3">Amount</th>
-                                        ${isAdmin ? `<th class="p-3 text-right">Action</th>` : ''}
+                                        ${isMainAdmin ? `<th class="p-3 text-right">Action</th>` : ''}
                                     </tr>
                                 </thead>
                                 <tbody id="repaymentHistoryTbody" class="divide-y divide-slate-800 text-sm"></tbody>
@@ -2154,7 +2329,7 @@
         }
 
         function openLoanModal() {
-            if (appData.currentUser.role !== 'admin') return;
+            if (!isAnyAdminUser()) return;
             document.getElementById('loanDate').value = new Date().toISOString().split('T')[0];
             document.getElementById('loanModal').classList.remove('hidden');
             if (appData.members.length > 0) checkLoanEligibility(appData.members[0].name);
@@ -2181,6 +2356,7 @@
         }
 
         function saveNewLoan() {
+            if (!isAnyAdminUser()) return;
             let memberName = document.getElementById('loanMember').value;
             let amount = parseFloat(document.getElementById('loanAmount').value);
             let rate = parseFloat(document.getElementById('loanRate').value);
@@ -2194,7 +2370,7 @@
         }
 
         function openRepaymentModal(id) { 
-            if (appData.currentUser.role !== 'admin') return;
+            if (!isAnyAdminUser()) return;
             const loan = appData.loans.find(l => l.id === id);
             document.getElementById('repayLoanId').value = id;
             document.getElementById('repayLoanMemberLabel').innerText = loan ? `Member: ${loan.memberName} (Loan: ₹${loan.amount})` : "";
@@ -2204,7 +2380,7 @@
         }
         function closeRepaymentModal() { document.getElementById('repaymentModal').classList.add('hidden'); }
         function saveRepayment() {
-            if (appData.currentUser.role !== 'admin') return;
+            if (!isAnyAdminUser()) return;
             const loanId = parseInt(document.getElementById('repayLoanId').value);
             const principalRaw = document.getElementById('repayPrincipalAmount').value.trim();
             const interestRaw = document.getElementById('repayInterestAmount').value.trim();
@@ -2270,7 +2446,8 @@
         }
 
         function renderExpensesTab() {
-            const isAdmin = appData.currentUser.role === 'admin';
+            const isAdmin = isAnyAdminUser();
+            const isMainAdmin = isMainAdminUser();
             const memberName = isAdmin ? null : appData.currentUser.name;
             const expensesList = isAdmin ? appData.expenses : appData.expenses.filter(e => e.title.includes(memberName));
 
@@ -2283,7 +2460,7 @@
                     <div class="flex flex-wrap justify-between items-center gap-4">
                         <div>
                             <h2 class="text-xl font-bold text-white">${isAdmin ? 'અમારી બચત | અમારી સુરક્ષા - Penalties' : 'અમારી બચત | અમારી સુરક્ષા - My Penalties'}</h2>
-                            <p class="text-xs text-slate-400">${isAdmin ? 'Jurmana ya extra income/expense add, edit ya delete karein.' : 'Aap par lagi hui late penalties ya charges.'}</p>
+                            <p class="text-xs text-slate-400">${isAdmin ? 'Jurmana ya extra income/expense add/edit karein (Delete sirf Main Admin ke liye).' : 'Aap par lagi hui late penalties ya charges.'}</p>
                         </div>
                         ${isAdmin ? `<button onclick="openExpenseModal()" class="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-xl text-sm font-medium transition"><i data-lucide="plus-circle" class="w-4 h-4"></i> Add Transaction</button>` : ''}
                     </div>
@@ -2329,9 +2506,11 @@
                                                 <button onclick="openExpenseModal(${e.id})" class="px-3 py-1.5 bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white rounded-lg text-xs font-medium transition inline-flex items-center gap-1">
                                                     <i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Edit
                                                 </button>
-                                                <button onclick="deleteExpense(${e.id})" class="px-2.5 py-1.5 bg-rose-600/20 text-rose-400 hover:bg-rose-600 hover:text-white rounded-lg text-xs font-medium transition inline-flex items-center gap-1" title="Delete">
-                                                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Delete
-                                                </button>
+                                                ${isMainAdmin ? `
+                                                    <button onclick="deleteExpense(${e.id})" class="px-2.5 py-1.5 bg-rose-600/20 text-rose-400 hover:bg-rose-600 hover:text-white rounded-lg text-xs font-medium transition inline-flex items-center gap-1" title="Delete">
+                                                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Delete
+                                                    </button>
+                                                ` : ''}
                                             </td>
                                         ` : ''}
                                     </tr>
@@ -2376,7 +2555,7 @@
         }
 
         function deleteExpense(id) {
-            if (appData.currentUser.role !== 'admin') return;
+            if (!isMainAdminUser()) { alert('Sirf Main Admin hi penalty/transaction entry delete kar sakta hai!'); return; }
             if (!confirm('Kya aap is penalty/transaction entry ko delete karna chahte hain?')) return;
             const target = appData.expenses.find(e => e.id === id);
             appData.expenses = appData.expenses.filter(e => e.id !== id);
@@ -2385,7 +2564,7 @@
         }
 
         function openExpenseModal(id = null) { 
-            if (appData.currentUser.role !== 'admin') return;
+            if (!isAnyAdminUser()) return;
             if (id) {
                 const exp = appData.expenses.find(e => e.id === id);
                 if (!exp) return;
@@ -2407,7 +2586,7 @@
         }
         function closeExpenseModal() { document.getElementById('expenseModal').classList.add('hidden'); }
         function saveExpense() {
-            if (appData.currentUser.role !== 'admin') return;
+            if (!isAnyAdminUser()) return;
             const editIdRaw = document.getElementById('editExpenseId').value;
             const title = document.getElementById('expTitle').value.trim();
             const amount = parseFloat(document.getElementById('expAmount').value);
@@ -2434,7 +2613,7 @@
         }
 
         function renderAuditTab() {
-            const isAdmin = appData.currentUser.role === 'admin';
+            const isAdmin = isAnyAdminUser();
             let totalSavingsCount = 0;
             Object.keys(appData.savings).forEach(k => {
                 let val = appData.savings[k];
@@ -2557,7 +2736,7 @@
         }
 
         function renderQueriesTab() {
-            const isAdmin = appData.currentUser.role === 'admin';
+            const isAdmin = isAnyAdminUser();
             const memberName = isAdmin ? null : appData.currentUser.name;
             const filtered = isAdmin ? appData.queries : appData.queries.filter(q => q.memberName === memberName);
 
@@ -2603,6 +2782,7 @@
         }
 
         function sendReply(qid) {
+            if (!isAnyAdminUser()) return;
             let replyText = document.getElementById(`reply_${qid}`).value.trim();
             if (!replyText) { alert('Reply likhein.'); return; }
             let q = appData.queries.find(x => x.id === qid);
