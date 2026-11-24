@@ -63,7 +63,6 @@
                 } catch (err) {
                     console.error("Firebase Save Error:", err);
                     updateSyncStatus("error");
-                    alert("Cloud save error: Internet ya Firebase Rules check karein.");
                 }
             }
         };
@@ -80,7 +79,7 @@
                 text.innerText = "Syncing...";
             } else {
                 dot.className = "w-2 h-2 rounded-full bg-rose-500";
-                text.innerText = "Offline / Sync Error";
+                text.innerText = "Offline / Local Mode";
             }
         }
 
@@ -99,8 +98,8 @@
     </script>
 
     <script>
-        const STORAGE_KEY = "amari_bachat_suraksha_v35";
-        const SESSION_KEY = "amari_bachat_session_v1";
+        const STORAGE_KEY = "amari_bachat_suraksha_v36";
+        const SESSION_KEY = "amari_bachat_session_v2";
         const DEFAULT_MEMBER_PHOTO = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150";
         const MAX_ACTIVITY_LOGS = 500;
 
@@ -144,6 +143,7 @@
         let activeRepaymentHistoryLoanId = null;
         let activityFilterCategory = "ALL";
         let activitySearchQuery = "";
+        let loginErrorMessage = "";
 
         function isAnyAdminUser(user = appData.currentUser) {
             return Boolean(user && user.role === "admin");
@@ -233,7 +233,7 @@
             return copy;
         }
 
-        let localCached = JSON.parse(localStorage.getItem(STORAGE_KEY));
+        let localCached = JSON.parse(localStorage.getItem(STORAGE_KEY)) || JSON.parse(localStorage.getItem("amari_bachat_suraksha_v35"));
         let appData = {
             ...defaultSharedData,
             ...stripIgnoredLegacyFields(localCached),
@@ -247,7 +247,7 @@
                 ? appData.adminAccounts.map((acc, idx) => ({
                     id: acc.id || (idx === 0 ? "main_admin" : `co_admin_${idx}`),
                     username: String(acc.username || "").trim(),
-                    password: String(acc.password || ""),
+                    password: String(acc.password || "").trim(),
                     displayName: String(acc.displayName || (idx === 0 ? "Main Admin" : `Co-Admin ${idx}`)).trim(),
                     adminLevel: idx === 0 || acc.adminLevel === "main" ? "main" : "co"
                 }))
@@ -256,9 +256,9 @@
             let mainIdx = accounts.findIndex(a => a.adminLevel === "main");
             if (mainIdx === -1) mainIdx = 0;
             accounts[mainIdx].adminLevel = "main";
-            if (baseCreds.username) accounts[mainIdx].username = baseCreds.username;
-            if (baseCreds.password) accounts[mainIdx].password = baseCreds.password;
-            if (baseCreds.displayName) accounts[mainIdx].displayName = baseCreds.displayName;
+            if (!accounts[mainIdx].username) accounts[mainIdx].username = String(baseCreds.username || "admin").trim();
+            if (!accounts[mainIdx].password) accounts[mainIdx].password = String(baseCreds.password || "admin123").trim();
+            if (!accounts[mainIdx].displayName) accounts[mainIdx].displayName = String(baseCreds.displayName || "Main Admin").trim();
 
             const mainAcc = accounts[mainIdx];
             accounts.splice(mainIdx, 1);
@@ -268,8 +268,20 @@
             const defaultCo1 = defaultAdminAccounts[1];
             const defaultCo2 = defaultAdminAccounts[2];
 
-            const finalCo1 = coAdmins[0] || { ...defaultCo1 };
-            const finalCo2 = coAdmins[1] || { ...defaultCo2 };
+            const finalCo1 = {
+                id: (coAdmins[0] && coAdmins[0].id) || defaultCo1.id,
+                username: (coAdmins[0] && coAdmins[0].username) || defaultCo1.username,
+                password: (coAdmins[0] && coAdmins[0].password) || defaultCo1.password,
+                displayName: (coAdmins[0] && coAdmins[0].displayName) || defaultCo1.displayName,
+                adminLevel: "co"
+            };
+            const finalCo2 = {
+                id: (coAdmins[1] && coAdmins[1].id) || defaultCo2.id,
+                username: (coAdmins[1] && coAdmins[1].username) || defaultCo2.username,
+                password: (coAdmins[1] && coAdmins[1].password) || defaultCo2.password,
+                displayName: (coAdmins[1] && coAdmins[1].displayName) || defaultCo2.displayName,
+                adminLevel: "co"
+            };
 
             appData.adminAccounts = [mainAcc, finalCo1, finalCo2];
             appData.adminCreds = {
@@ -369,12 +381,16 @@
         }
 
         window.applyCloudData = function(cloudData) {
+            const previousAccounts = Array.isArray(appData.adminAccounts) ? [...appData.adminAccounts] : [...defaultAdminAccounts];
             appData = {
                 ...defaultSharedData,
                 ...stripIgnoredLegacyFields(cloudData),
                 currentUser: sessionState.currentUser,
                 activeTab: sessionState.activeTab
             };
+            if (!Array.isArray(cloudData.adminAccounts) || cloudData.adminAccounts.length === 0) {
+                appData.adminAccounts = previousAccounts;
+            }
             normalizeAppData();
             localStorage.setItem(STORAGE_KEY, JSON.stringify(getSharedPayload()));
             render();
@@ -442,6 +458,12 @@
             lucide.createIcons();
         }
 
+        function toggleLoginPasswordVisibility() {
+            const passInput = document.getElementById('adminPass');
+            if (!passInput) return;
+            passInput.type = passInput.type === 'password' ? 'text' : 'password';
+        }
+
         function renderLoginScreen() {
             const isDesktopMode = sessionState.viewMode === "desktop";
             return `
@@ -464,8 +486,12 @@
                             <div class="bg-slate-800/40 p-4 rounded-2xl border border-slate-700/50">
                                 <h3 class="font-semibold text-indigo-300 mb-3 flex items-center gap-2"><i data-lucide="user-cog" class="w-5 h-5"></i> Admin / Co-Admin Login</h3>
                                 <div class="space-y-3">
-                                    <input type="text" id="adminUser" placeholder="Admin / Co-Admin Username" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500">
-                                    <input type="password" id="adminPass" placeholder="Password" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500">
+                                    <input type="text" id="adminUser" autocomplete="username" placeholder="Username (e.g. admin, coadmin1, coadmin2)" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500">
+                                    <div class="relative">
+                                        <input type="password" id="adminPass" autocomplete="current-password" placeholder="Password" class="w-full bg-slate-900 border border-slate-700 rounded-xl pl-4 pr-11 py-2.5 text-sm text-white focus:outline-none focus:border-indigo-500">
+                                        <button type="button" onclick="toggleLoginPasswordVisibility()" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white text-xs px-1" title="Show / Hide Password">👁️</button>
+                                    </div>
+                                    ${loginErrorMessage ? `<p id="loginErrorBox" class="text-xs text-rose-400 bg-rose-950/50 border border-rose-500/30 px-3 py-2 rounded-xl">${escapeAttr(loginErrorMessage)}</p>` : ''}
                                     <button onclick="handleAdminLogin()" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-medium py-2.5 rounded-xl transition shadow-lg shadow-indigo-600/30">Login to Admin Panel</button>
                                 </div>
                             </div>
@@ -494,23 +520,70 @@
         }
 
         function handleAdminLogin() {
-            const u = document.getElementById('adminUser').value.trim();
-            const p = document.getElementById('adminPass').value;
+            const uEl = document.getElementById('adminUser');
+            const pEl = document.getElementById('adminPass');
+            const u = (uEl ? uEl.value : "").trim();
+            const p = (pEl ? pEl.value : "").trim();
+
             normalizeAdminAccounts();
-            const matched = appData.adminAccounts.find(acc => acc.username === u && acc.password === p);
+            const candidatePool = [
+                ...(Array.isArray(appData.adminAccounts) ? appData.adminAccounts : []),
+                ...defaultAdminAccounts
+            ];
+
+            let matched = candidatePool.find(acc =>
+                String(acc.username || "").trim().toLowerCase() === u.toLowerCase() &&
+                String(acc.password || "").trim() === p
+            );
+
+            if (!matched && appData.adminCreds) {
+                if (
+                    String(appData.adminCreds.username || "").trim().toLowerCase() === u.toLowerCase() &&
+                    String(appData.adminCreds.password || "").trim() === p
+                ) {
+                    matched = {
+                        id: "main_admin",
+                        username: String(appData.adminCreds.username || "admin").trim(),
+                        password: String(appData.adminCreds.password || "").trim(),
+                        displayName: String(appData.adminCreds.displayName || "Main Admin").trim(),
+                        adminLevel: "main"
+                    };
+                }
+            }
+
             if (matched) {
+                loginErrorMessage = "";
+                const normalizedMatched = {
+                    id: matched.id || (matched.adminLevel === "main" ? "main_admin" : "co_admin_1"),
+                    username: String(matched.username || u).trim(),
+                    password: String(matched.password || p).trim(),
+                    displayName: String(matched.displayName || "Admin").trim(),
+                    adminLevel: matched.adminLevel === "main" ? "main" : "co"
+                };
+
+                const existingIdx = appData.adminAccounts.findIndex(a => a.id === normalizedMatched.id || a.username.toLowerCase() === normalizedMatched.username.toLowerCase());
+                if (existingIdx !== -1) {
+                    appData.adminAccounts[existingIdx] = normalizedMatched;
+                }
+
                 appData.currentUser = {
                     role: 'admin',
-                    adminId: matched.id,
-                    username: matched.username,
-                    displayName: matched.displayName,
-                    adminLevel: matched.adminLevel
+                    adminId: normalizedMatched.id,
+                    username: normalizedMatched.username,
+                    displayName: normalizedMatched.displayName,
+                    adminLevel: normalizedMatched.adminLevel
                 };
                 appData.activeTab = 'dashboard';
-                recordActivityLog("Settings", `Logged in (${matched.displayName} - ${matched.adminLevel === 'main' ? 'Main Admin' : 'Co-Admin'})`);
+                recordActivityLog("Settings", `Logged in (${normalizedMatched.displayName} - ${normalizedMatched.adminLevel === 'main' ? 'Main Admin' : 'Co-Admin'})`);
                 saveAppData();
             } else {
-                alert('Galat Username ya Password!');
+                const userExists = candidatePool.some(acc => String(acc.username || "").trim().toLowerCase() === u.toLowerCase());
+                loginErrorMessage = !u || !p
+                    ? "Kripya Username aur Password dono dalein."
+                    : (userExists
+                        ? `Username "${u}" ke liye password galat hai.`
+                        : `Username "${u}" nahi mila. Valid usernames: admin, coadmin1, coadmin2.`);
+                render();
             }
         }
 
@@ -521,17 +594,19 @@
             if (!pinInput) { alert('Kripya apna personal PIN dalein.'); return; }
 
             const memberObj = appData.members.find(m => m.name === name);
-            if (!memberObj || String(memberObj.pin || "") !== pinInput) {
+            if (!memberObj || String(memberObj.pin || "").trim() !== pinInput) {
                 alert('Galat PIN! Aap sirf apna account hi apne PIN se khol sakte hain.');
                 return;
             }
 
+            loginErrorMessage = "";
             appData.currentUser = { role: 'member', name: memberObj.name, memberId: memberObj.id };
             appData.activeTab = 'dashboard';
             saveSessionOnly();
         }
 
         function logout() {
+            loginErrorMessage = "";
             appData.currentUser = null;
             saveSessionOnly();
         }
@@ -626,7 +701,7 @@
                                     </div>
                                     <div>
                                         <label class="text-[11px] text-slate-400 mb-1 block">Password</label>
-                                        <input type="password" id="newAdminPass" value="${escapeAttr(mainAcc.password)}" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none">
+                                        <input type="text" id="newAdminPass" value="${escapeAttr(mainAcc.password)}" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none">
                                     </div>
                                 </div>
                             </div>
@@ -644,7 +719,7 @@
                                     </div>
                                     <div>
                                         <label class="text-[11px] text-slate-400 mb-1 block">Password</label>
-                                        <input type="password" id="coAdmin1Pass" value="${escapeAttr(coAcc1.password)}" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none">
+                                        <input type="text" id="coAdmin1Pass" value="${escapeAttr(coAcc1.password)}" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none">
                                     </div>
                                 </div>
 
@@ -660,7 +735,7 @@
                                     </div>
                                     <div>
                                         <label class="text-[11px] text-slate-400 mb-1 block">Password</label>
-                                        <input type="password" id="coAdmin2Pass" value="${escapeAttr(coAcc2.password)}" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none">
+                                        <input type="text" id="coAdmin2Pass" value="${escapeAttr(coAcc2.password)}" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none">
                                     </div>
                                 </div>
                             </div>
@@ -934,7 +1009,7 @@
                 return;
             }
 
-            const usernames = [newU, co1User, co2User];
+            const usernames = [newU.toLowerCase(), co1User.toLowerCase(), co2User.toLowerCase()];
             if (new Set(usernames).size < 3) {
                 alert('Main Admin aur dono Co-Admins ke usernames alag hone chahiye.');
                 return;
