@@ -1023,7 +1023,7 @@
                         </div>
                         <div>
                             <h1 class="text-sm md:text-base font-bold text-emerald-300 tracking-wider">અમારી બચત <span class="text-amber-400">|</span> અમારી સુરક્ષા</h1>
-                            <p class="text-[11px] text-slate-400">${isAdmin ? (isMainAdmin ? '👑 Main Admin: ' + escapeAttr(activeAdminLabel) : '🛡️ Co-Admin: ' + escapeAttr(activeAdminLabel)) : '🔒 Member: ' + escapeAttr(appData.currentUser.name)} <span class="text-indigo-300 font-semibold">• ${escapeAttr(cycleInfo.cycleLabel)} (${cycleInfo.targetMonths}M)</span></p>
+                            <p class="text-[11px] text-slate-400">${isAdmin ? (isMainAdmin ? '👑 Main Admin: ' + escapeAttr(activeAdminLabel) : '🛡️ Co-Admin: ' + escapeAttr(activeAdminLabel)) : '🔒 Member: ' + escapeAttr(appData.currentUser.name)}${isMainAdmin ? ` <span class="text-indigo-300 font-semibold">• ${escapeAttr(cycleInfo.cycleLabel)} (${cycleInfo.targetMonths}M)</span>` : ''}</p>
                         </div>
                     </div>
 
@@ -1032,7 +1032,7 @@
                         <button onclick="setTab('members')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'members' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">${isAdmin ? 'Members' : 'My Profile'}</button>
                         <button onclick="setTab('loans')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'loans' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Loans</button>
                         <button onclick="setTab('expenses')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'expenses' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Penalties</button>
-                        <button onclick="setTab('audit')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'audit' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Audit & Cycle</button>
+                        <button onclick="setTab('audit')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'audit' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">${isMainAdmin ? 'Audit & Cycle' : 'Audit'}</button>
                         <button onclick="setTab('queries')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'queries' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}">Chat</button>
                         ${isMainAdmin ? `<button onclick="setTab('activity')" class="px-3.5 py-2 rounded-xl text-xs font-medium transition ${appData.activeTab === 'activity' ? 'bg-amber-500 text-slate-950 font-bold shadow-lg shadow-amber-500/30' : 'bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500 hover:text-slate-950'}">📋 Activity Log</button>` : ''}
                         ${isMainAdmin ? `<button onclick="clearActiveAdminLockFromDashboard()" class="px-3 py-2 rounded-xl text-xs font-medium bg-amber-600/20 text-amber-300 border border-amber-500/30 hover:bg-amber-500 hover:text-slate-950 transition" title="Emergency Unlock Active Admin Lock">🔓 Emergency Unlock</button>` : ''}
@@ -1055,7 +1055,8 @@
                     ${appData.activeTab === 'activity' && isMainAdmin ? renderActivityLogTab() : ''}
                 </main>
 
-                <!-- Cycle Config & Settle Modal -->
+                ${isMainAdmin ? `
+                <!-- Cycle Config & Settle Modal (Main Admin Only) -->
                 <div id="cycleManageModal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in overflow-y-auto">
                     <div class="bg-slate-900 border border-slate-800 p-6 rounded-3xl w-full max-w-2xl space-y-5 shadow-2xl animate-scale-in my-8">
                         <div class="flex justify-between items-center">
@@ -1090,6 +1091,7 @@
                         <div id="cycleSettlementPreviewBox" class="bg-slate-800/40 border border-emerald-500/30 p-4 rounded-2xl space-y-3"></div>
                     </div>
                 </div>
+                ` : ''}
 
                 <!-- Admin Amount Add / Edit Modal -->
                 <div id="adminBalanceModal" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
@@ -1228,7 +1230,8 @@
         }
 
         function closeCycleManageModal() {
-            document.getElementById('cycleManageModal').classList.add('hidden');
+            const modal = document.getElementById('cycleManageModal');
+            if (modal) modal.classList.add('hidden');
         }
 
         function saveCycleConfiguration() {
@@ -1252,6 +1255,7 @@
         }
 
         function renderCycleSettlementPreviewBox() {
+            if (!isMainAdminUser()) return;
             const box = document.getElementById('cycleSettlementPreviewBox');
             if (!box) return;
             const summary = computeCycleSettlementSummary();
@@ -1331,7 +1335,7 @@
             }
 
             const archiveRecord = {
-                id: "cycle_" + Date.now(),
+                id: "cycle_" + Date.now() + "_" + Math.floor(Math.random() * 10000),
                 cycleNumber: cfg.cycleNumber,
                 cycleLabel: cfg.cycleLabel,
                 startMonth: cfg.startMonth,
@@ -1359,19 +1363,16 @@
             };
             appData.currentMonth = nextStartMonth;
 
-            // Reset savings, loans, penalties to 0 for fresh new cycle
             appData.savings = {};
             appData.loans = [];
             appData.expenses = [];
 
-            // Reset all Admin Cash / Balances to 0
             appData.adminBalances = (appData.adminBalances || []).map((b, idx) => ({
                 id: b.id || (idx + 1),
                 name: b.name,
                 amount: 0
             }));
 
-            // Members joinMonth reset to new cycle startMonth so profit share in new cycle starts fresh from 0
             appData.members = appData.members.map(m => ({
                 ...m,
                 joinMonth: nextStartMonth
@@ -1381,6 +1382,33 @@
             closeCycleManageModal();
             saveAppData();
             alert(`${archiveRecord.cycleLabel} settle ho gaya hai! Ab Cycle ${nextCycleNum} (${formatMonthMMYYYY(nextStartMonth)}) 0 se shuru ho chuka hai.`);
+        }
+
+        function deleteCompletedCycleRecord(indexOrId) {
+            if (!isMainAdminUser()) {
+                alert('Sirf Main Admin hi settled cycle history delete kar sakta hai!');
+                return;
+            }
+            if (!Array.isArray(appData.completedCycles) || appData.completedCycles.length === 0) return;
+
+            let targetIdx = -1;
+            if (typeof indexOrId === "number" && indexOrId >= 0 && indexOrId < appData.completedCycles.length) {
+                targetIdx = indexOrId;
+            } else {
+                targetIdx = appData.completedCycles.findIndex(c => String(c.id) === String(indexOrId));
+            }
+
+            if (targetIdx === -1) return;
+            const targetItem = appData.completedCycles[targetIdx];
+            const labelText = targetItem && targetItem.cycleLabel ? targetItem.cycleLabel : `Entry #${targetIdx + 1}`;
+
+            if (!confirm(`Kya aap Settled Cycle History mein se "${labelText}" ko permanently delete karna chahte hain?`)) {
+                return;
+            }
+
+            appData.completedCycles.splice(targetIdx, 1);
+            recordActivityLog("Settings", `Deleted settled cycle history record: ${labelText} (Period: ${formatMonthMMYYYY(targetItem.startMonth)} to ${formatMonthMMYYYY(targetItem.endMonth)}, Payout: ₹${targetItem.grandTotalFund})`);
+            saveAppData();
         }
 
         function downloadSettlementReportPDF(archiveItem = null) {
@@ -2047,10 +2075,6 @@
                                     <p class="text-xs text-emerald-400 font-medium">Aapka Personal Saving & Loan Dashboard ('અમારી બચત | અમારી સુરક્ષા')</p>
                                 </div>
                             </div>
-                            <div class="bg-indigo-950/60 border border-indigo-500/30 px-4 py-2.5 rounded-xl text-xs">
-                                <span class="text-indigo-300 font-bold block">${escapeAttr(cycleInfo.cycleLabel)}</span>
-                                <span class="text-slate-300">Progress: ${elapsedCycleMonths} / ${cycleInfo.targetMonths} Months (Start: ${formatMonthMMYYYY(cycleInfo.startMonth)})</span>
-                            </div>
                         </div>
 
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -2110,7 +2134,8 @@
 
             return `
                 <div class="space-y-6">
-                    <!-- Active Cycle Banner -->
+                    ${isMainAdmin ? `
+                    <!-- Active Cycle Banner (Main Admin Only) -->
                     <div class="bg-slate-900/70 border border-indigo-500/30 p-4 rounded-2xl shadow-lg flex flex-wrap justify-between items-center gap-4">
                         <div>
                             <span class="text-xs font-bold text-indigo-300 uppercase tracking-wider">🔄 Active Cycle: ${escapeAttr(cycleInfo.cycleLabel)}</span>
@@ -2122,13 +2147,12 @@
                             <button onclick="setTab('audit')" class="px-3.5 py-2 bg-indigo-600/20 text-indigo-300 border border-indigo-500/30 hover:bg-indigo-600 hover:text-white rounded-xl text-xs font-medium transition">
                                 View Payout & Cycle History
                             </button>
-                            ${isMainAdmin ? `
-                                <button onclick="openCycleManageModal()" class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition shadow-lg">
-                                    Cycle Duration & Settle
-                                </button>
-                            ` : ''}
+                            <button onclick="openCycleManageModal()" class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition shadow-lg">
+                                Cycle Duration & Settle
+                            </button>
                         </div>
                     </div>
+                    ` : ''}
 
                     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
                         <button type="button" onclick="window.downloadMetricPDF('savings')" class="text-left bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-emerald-500/40 p-5 rounded-2xl shadow-xl transition cursor-pointer group" title="Download Total Savings PDF">
@@ -3388,9 +3412,9 @@
                     <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-6 shadow-xl">
                         <div class="flex flex-wrap justify-between items-center gap-4">
                             <div>
-                                <h2 class="text-xl font-bold text-white">${isAdmin ? 'અમારી બચત | અમારી સુરક્ષા - Audit & Cycle Settlement' : 'અમારી બચત | અમારી સુરક્ષા - My Audit & Payout Summary'}</h2>
+                                <h2 class="text-xl font-bold text-white">${isMainAdmin ? 'અમારી બચત | અમારી સુરક્ષા - Audit & Cycle Settlement' : 'અમારી બચત | અમારી સુરક્ષા - Audit Summary'}</h2>
                                 <p class="text-xs text-slate-400">
-                                    <b>${escapeAttr(cycleInfo.cycleLabel)}</b> (Target: <b>${cycleInfo.targetMonths} Months</b>, Elapsed: <b>${elapsedCycleMonths} Months</b>) • Profit join month ke anusaar active mahinon par banta jata hai.
+                                    ${isMainAdmin ? `<b>${escapeAttr(cycleInfo.cycleLabel)}</b> (Target: <b>${cycleInfo.targetMonths} Months</b>, Elapsed: <b>${elapsedCycleMonths} Months</b>) • ` : ''}Profit join month ke anusaar active mahinon par banta jata hai.
                                 </p>
                             </div>
                             <div class="flex flex-wrap items-center gap-2">
@@ -3467,14 +3491,15 @@
                         </div>
                     </div>
 
-                    <!-- Settled / Completed Cycles Archive -->
+                    ${isMainAdmin ? `
+                    <!-- Settled / Completed Cycles Archive (Main Admin Only) -->
                     <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-4 shadow-xl">
                         <div>
                             <h3 class="text-lg font-bold text-white flex items-center gap-2">
                                 <i data-lucide="archive" class="w-5 h-5 text-emerald-400"></i>
                                 Settled / Completed Cycles History
                             </h3>
-                            <p class="text-xs text-slate-400">Pichle settled cycles ka record yahan safe rehta hai; aap kisi bhi completed cycle ki settlement PDF download kar sakte hain.</p>
+                            <p class="text-xs text-slate-400">Pichle settled cycles ka record yahan safe rehta hai; aap kisi bhi completed cycle ki settlement PDF download kar sakte hain ya entry delete kar sakte hain.</p>
                         </div>
 
                         <div class="overflow-x-auto">
@@ -3488,7 +3513,7 @@
                                         <th class="p-3">Total Savings</th>
                                         <th class="p-3">Total Profit</th>
                                         <th class="p-3">Total Payout</th>
-                                        <th class="p-3 text-right">PDF</th>
+                                        <th class="p-3 text-right">Actions</th>
                                     </tr>
                                 </thead>
                                 <tbody class="divide-y divide-slate-800 text-sm">
@@ -3504,9 +3529,12 @@
                                             <td class="p-3 text-emerald-400">₹${c.totalSavings}</td>
                                             <td class="p-3 text-cyan-300">₹${c.totalProfit}</td>
                                             <td class="p-3 font-bold text-amber-300">₹${c.grandTotalFund}</td>
-                                            <td class="p-3 text-right">
-                                                <button onclick="downloadSettlementReportPDF(appData.completedCycles[${idx}])" class="px-3 py-1.5 bg-purple-600/20 text-purple-300 hover:bg-purple-600 hover:text-white rounded-lg text-xs font-medium transition">
+                                            <td class="p-3 text-right space-x-2 whitespace-nowrap">
+                                                <button onclick="downloadSettlementReportPDF(appData.completedCycles[${idx}])" class="px-3 py-1.5 bg-purple-600/20 text-purple-300 hover:bg-purple-600 hover:text-white rounded-lg text-xs font-medium transition inline-flex items-center gap-1">
                                                     Settlement PDF
+                                                </button>
+                                                <button onclick="deleteCompletedCycleRecord(${idx})" class="px-2.5 py-1.5 bg-rose-600/20 text-rose-400 hover:bg-rose-600 hover:text-white rounded-lg text-xs font-medium transition inline-flex items-center gap-1" title="Delete Settled Cycle Entry">
+                                                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Delete
                                                 </button>
                                             </td>
                                         </tr>
@@ -3515,6 +3543,7 @@
                             </table>
                         </div>
                     </div>
+                    ` : ''}
                 </div>
             `;
         }
