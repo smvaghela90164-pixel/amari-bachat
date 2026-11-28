@@ -140,6 +140,7 @@
         const defaultSharedData = {
             adminCreds: { username: "admin", password: "admin123", displayName: "Main Admin", role: "Super Admin" },
             adminAccounts: defaultAdminAccounts,
+            loanContactAdminId: "main_admin",
             activeAdminSession: null,
             adminBalances: [
                 { id: 1, name: "Main Admin", amount: 0 },
@@ -202,6 +203,15 @@
             const found = (appData.adminAccounts || []).find(a => a.username === user.username);
             if (found && found.displayName) return found.displayName;
             return (appData.adminCreds && appData.adminCreds.displayName) || "Admin";
+        }
+
+        function getLoanContactAdminName() {
+            const accounts = Array.isArray(appData.adminAccounts) && appData.adminAccounts.length > 0
+                ? appData.adminAccounts
+                : defaultAdminAccounts;
+            const targetId = appData.loanContactAdminId || "main_admin";
+            const matched = accounts.find(a => a.id === targetId) || accounts[0] || defaultAdminAccounts[0];
+            return (matched && matched.displayName) || "Main Admin";
         }
 
         function formatExactDateTime(d = new Date()) {
@@ -465,6 +475,11 @@
                 displayName: mainAcc.displayName,
                 role: "Super Admin"
             };
+
+            const validContactIds = appData.adminAccounts.map(a => a.id);
+            if (!appData.loanContactAdminId || !validContactIds.includes(appData.loanContactAdminId)) {
+                appData.loanContactAdminId = mainAcc.id;
+            }
         }
 
         function normalizeAppData() {
@@ -561,6 +576,7 @@
             return {
                 adminCreds: appData.adminCreds,
                 adminAccounts: appData.adminAccounts,
+                loanContactAdminId: appData.loanContactAdminId,
                 activeAdminSession: appData.activeAdminSession || null,
                 adminBalances: appData.adminBalances,
                 currentMonth: appData.currentMonth,
@@ -1173,6 +1189,16 @@
                                 </div>
                             </div>
 
+                            <div class="bg-slate-800/40 border border-emerald-500/30 p-3.5 rounded-2xl space-y-2">
+                                <h4 class="text-xs font-bold text-emerald-300 uppercase">💬 Loan Contact Admin (Member View)</h4>
+                                <label class="text-[11px] text-slate-400 block">Member login karne par loan ke liye kis admin ka naam dikhana hai?</label>
+                                <select id="loanContactAdminSelect" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none">
+                                    <option value="${escapeAttr(mainAcc.id)}" ${appData.loanContactAdminId === mainAcc.id ? 'selected' : ''}>Main Admin (${escapeAttr(mainAcc.displayName)})</option>
+                                    <option value="${escapeAttr(coAcc1.id)}" ${appData.loanContactAdminId === coAcc1.id ? 'selected' : ''}>Co-Admin 1 (${escapeAttr(coAcc1.displayName)})</option>
+                                    <option value="${escapeAttr(coAcc2.id)}" ${appData.loanContactAdminId === coAcc2.id ? 'selected' : ''}>Co-Admin 2 (${escapeAttr(coAcc2.displayName)})</option>
+                                </select>
+                            </div>
+
                             <div class="border-t border-slate-800 pt-3 mt-3">
                                 <h4 class="text-xs font-bold text-indigo-300 mb-2">📥 Restore Data from Backup File (.json)</h4>
                                 <input type="file" id="importFile" accept=".json" class="w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-slate-700 file:text-white hover:file:bg-slate-600 cursor-pointer mb-2">
@@ -1211,6 +1237,10 @@
         }
         function openSettingsModal() {
             if (!isMainAdminUser()) { alert('Sirf Main Admin hi Settings khol sakta hai!'); return; }
+            const sel = document.getElementById('loanContactAdminSelect');
+            if (sel && appData.loanContactAdminId) {
+                sel.value = appData.loanContactAdminId;
+            }
             document.getElementById('settingsModal').classList.remove('hidden');
         }
         function closeSettingsModal() { document.getElementById('settingsModal').classList.add('hidden'); }
@@ -1677,6 +1707,9 @@
             let co2User = document.getElementById('coAdmin2User').value.trim();
             let co2Pass = document.getElementById('coAdmin2Pass').value.trim();
 
+            const contactSelectEl = document.getElementById('loanContactAdminSelect');
+            const selectedContactId = contactSelectEl ? contactSelectEl.value : "main_admin";
+
             if (!newU || !newP || !newName || !co1Name || !co1User || !co1Pass || !co2Name || !co2User || !co2Pass) {
                 alert('Main Admin aur dono Co-Admins ke sabhi fields bharein.');
                 return;
@@ -1693,6 +1726,7 @@
                 { id: "co_admin_1", username: co1User, password: co1Pass, displayName: co1Name, adminLevel: "co" },
                 { id: "co_admin_2", username: co2User, password: co2Pass, displayName: co2Name, adminLevel: "co" }
             ];
+            appData.loanContactAdminId = selectedContactId || "main_admin";
             appData.adminCreds = { username: newU, password: newP, displayName: newName, role: "Super Admin" };
             appData.currentUser.displayName = newName;
             appData.currentUser.username = newU;
@@ -1701,7 +1735,8 @@
                 appData.activeAdminSession.username = newU;
             }
 
-            recordActivityLog("Settings", `Updated Main Admin (${newName}) and Co-Admins (${co1Name}, ${co2Name}) credentials`);
+            const contactAdminName = getLoanContactAdminName();
+            recordActivityLog("Settings", `Updated Main Admin (${newName}), Co-Admins (${co1Name}, ${co2Name}), and Loan Contact Admin (${contactAdminName})`);
             alert('Main Admin & Co-Admins settings updated & synced to cloud!');
             closeSettingsModal();
             saveAppData();
@@ -2064,6 +2099,7 @@
                 let memberPenalties = appData.expenses.filter(e => e.title.includes(memberName) && e.type === 'Income').reduce((s, e) => s + e.amount, 0);
                 let currentMonthStatus = checkMemberPaidStatus(memberObj.id, appData.currentMonth);
                 let safePhoto = escapeAttr(sanitizePhotoUrl(memberObj.photo));
+                const loanContactName = escapeAttr(getLoanContactAdminName());
 
                 return `
                     <div class="space-y-6">
@@ -2073,6 +2109,16 @@
                                 <div>
                                     <h2 class="text-xl font-bold text-white">Namaste, ${escapeAttr(memberObj.name)}!</h2>
                                     <p class="text-xs text-emerald-400 font-medium">Aapka Personal Saving & Loan Dashboard ('અમારી બચત | અમારી સુરક્ષા')</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="bg-indigo-950/50 border border-indigo-500/30 p-4 rounded-2xl shadow-lg flex flex-wrap justify-between items-center gap-3">
+                            <div class="flex items-center gap-2.5">
+                                <span class="text-lg">💬</span>
+                                <div>
+                                    <p class="text-xs text-indigo-300 font-semibold uppercase tracking-wide">Loan Contact</p>
+                                    <p class="text-sm text-white">Loan ke liye sampark karein: <b class="text-emerald-300">${loanContactName}</b></p>
                                 </div>
                             </div>
                         </div>
@@ -2884,9 +2930,19 @@
             const allUserLoans = isAdmin ? appData.loans : appData.loans.filter(l => l.memberName === memberName);
             const activeLoansList = allUserLoans.filter(l => !l.deleted);
             const deletedLoansList = allUserLoans.filter(l => !!l.deleted);
+            const loanContactName = escapeAttr(getLoanContactAdminName());
 
             return `
                 <div class="space-y-6">
+                    ${!isAdmin ? `
+                        <div class="bg-indigo-950/50 border border-indigo-500/30 p-4 rounded-2xl shadow-lg flex flex-wrap justify-between items-center gap-3">
+                            <div>
+                                <p class="text-xs text-indigo-300 font-semibold uppercase tracking-wide">💬 Loan Contact</p>
+                                <p class="text-sm text-white">Loan ke liye sampark karein: <b class="text-emerald-300">${loanContactName}</b></p>
+                            </div>
+                        </div>
+                    ` : ''}
+
                     <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-6 shadow-xl">
                         <div class="flex flex-wrap justify-between items-center gap-4">
                             <div>
