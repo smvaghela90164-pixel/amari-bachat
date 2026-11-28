@@ -117,9 +117,10 @@
     </script>
 
     <script>
-        const STORAGE_KEY = "amari_bachat_suraksha_v38";
+        const STORAGE_KEY = "amari_bachat_suraksha_v39";
         const SESSION_KEY = "amari_bachat_session_v3";
         const DEFAULT_MEMBER_PHOTO = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150";
+        const DEFAULT_MONTHLY_SAVING = 500;
         const MAX_ACTIVITY_LOGS = 500;
         const ADMIN_LOCK_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -156,10 +157,10 @@
             },
             completedCycles: [],
             members: [
-                { id: 1, name: "Aarav Sharma", age: 28, phone: "9876543210", pin: "1111", photo: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150", joinMonth: "2026-01" },
-                { id: 2, name: "Rohan Verma", age: 32, phone: "9876543211", pin: "2222", photo: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150", joinMonth: "2026-01" },
-                { id: 3, name: "Amit Patel", age: 25, phone: "9876543212", pin: "3333", photo: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150", joinMonth: "2026-02" },
-                { id: 4, name: "Priya Singh", age: 29, phone: "9876543213", pin: "4444", photo: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150", joinMonth: "2026-02" }
+                { id: 1, name: "Aarav Sharma", age: 28, phone: "9876543210", pin: "1111", monthlyAmount: 500, photo: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150", joinMonth: "2026-01" },
+                { id: 2, name: "Rohan Verma", age: 32, phone: "9876543211", pin: "2222", monthlyAmount: 500, photo: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150", joinMonth: "2026-01" },
+                { id: 3, name: "Amit Patel", age: 25, phone: "9876543212", pin: "3333", monthlyAmount: 500, photo: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150", joinMonth: "2026-02" },
+                { id: 4, name: "Priya Singh", age: 29, phone: "9876543213", pin: "4444", monthlyAmount: 500, photo: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150", joinMonth: "2026-02" }
             ],
             savings: {},
             loans: [],
@@ -176,6 +177,59 @@
         let showEmergencyUnlockButton = false;
         let savedLoginUserDraft = "";
         let savedLoginPassDraft = "";
+
+        function getMemberMonthlyRate(memberOrId) {
+            let member = null;
+            if (memberOrId && typeof memberOrId === "object") {
+                member = memberOrId;
+            } else {
+                member = (appData.members || []).find(m => m.id === Number(memberOrId));
+            }
+            const parsed = member ? parseFloat(member.monthlyAmount) : NaN;
+            return !isNaN(parsed) && parsed > 0 ? parsed : DEFAULT_MONTHLY_SAVING;
+        }
+
+        function getSavingsEntryDetails(val) {
+            if (val === true) {
+                return { paid: true, monthsCredited: 1, advanceMonths: 0, rate: DEFAULT_MONTHLY_SAVING, totalAmount: DEFAULT_MONTHLY_SAVING };
+            }
+            if (val && typeof val === "object" && val.paid) {
+                const adv = parseInt(val.advanceMonths, 10) || 0;
+                const monthsCredited = 1 + adv;
+                const parsedRate = parseFloat(val.amountPerMonth);
+                const rate = !isNaN(parsedRate) && parsedRate > 0 ? parsedRate : DEFAULT_MONTHLY_SAVING;
+                const parsedTotal = parseFloat(val.totalAmount);
+                const totalAmount = !isNaN(parsedTotal) && parsedTotal > 0 ? parsedTotal : (monthsCredited * rate);
+                return { paid: true, monthsCredited, advanceMonths: adv, rate, totalAmount };
+            }
+            return { paid: false, monthsCredited: 0, advanceMonths: 0, rate: DEFAULT_MONTHLY_SAVING, totalAmount: 0 };
+        }
+
+        function getAllSavingsStats() {
+            let totalAmount = 0;
+            let totalMonths = 0;
+            const memberAmountMap = {};
+            const memberMonthsMap = {};
+            (appData.members || []).forEach(m => {
+                memberAmountMap[m.id] = 0;
+                memberMonthsMap[m.id] = 0;
+            });
+
+            Object.keys(appData.savings || {}).forEach(k => {
+                const info = getSavingsEntryDetails(appData.savings[k]);
+                if (!info.paid) return;
+                const parts = String(k).split("_");
+                const mId = parseInt(parts.pop(), 10);
+                totalAmount += info.totalAmount;
+                totalMonths += info.monthsCredited;
+                if (memberAmountMap[mId] !== undefined) {
+                    memberAmountMap[mId] += info.totalAmount;
+                    memberMonthsMap[mId] += info.monthsCredited;
+                }
+            });
+
+            return { totalAmount, totalMonths, memberAmountMap, memberMonthsMap };
+        }
 
         function isSessionExpired(sess) {
             if (!sess || !sess.active) return true;
@@ -310,28 +364,10 @@
         }
 
         function computeCycleSettlementSummary() {
-            let totalSavingsCount = 0;
-            const memberSavingsMap = {};
-            appData.members.forEach(m => { memberSavingsMap[m.id] = 0; });
+            const savingsStats = getAllSavingsStats();
+            const totalSavingsCount = savingsStats.totalMonths;
+            const totalSavings = savingsStats.totalAmount;
 
-            Object.keys(appData.savings || {}).forEach(k => {
-                const val = appData.savings[k];
-                const parts = String(k).split("_");
-                const mId = parseInt(parts.pop(), 10);
-                let creditedMonths = 0;
-                if (val === true) creditedMonths = 1;
-                else if (val && typeof val === "object" && val.paid) {
-                    creditedMonths = 1 + (parseInt(val.advanceMonths, 10) || 0);
-                }
-                if (creditedMonths > 0) {
-                    totalSavingsCount += creditedMonths;
-                    if (memberSavingsMap[mId] !== undefined) {
-                        memberSavingsMap[mId] += creditedMonths;
-                    }
-                }
-            });
-
-            const totalSavings = totalSavingsCount * 500;
             let totalInterest = 0;
             (appData.loans || []).forEach(l => {
                 (l.repayments || []).forEach(r => {
@@ -367,8 +403,8 @@
             });
 
             const memberRows = appData.members.map((m, idx) => {
-                const paidMonths = memberSavingsMap[m.id] || 0;
-                const personalSavings = paidMonths * 500;
+                const paidMonths = savingsStats.memberMonthsMap[m.id] || 0;
+                const personalSavings = savingsStats.memberAmountMap[m.id] || 0;
                 const activeMonths = activeMonthsPerMember[m.id] || 1;
                 const profitShare = totalActiveMemberMonths > 0
                     ? Math.round((totalProfit * activeMonths / totalActiveMemberMonths) * 100) / 100
@@ -411,7 +447,7 @@
             return copy;
         }
 
-        let localCached = JSON.parse(localStorage.getItem(STORAGE_KEY)) || JSON.parse(localStorage.getItem("amari_bachat_suraksha_v37")) || JSON.parse(localStorage.getItem("amari_bachat_suraksha_v36"));
+        let localCached = JSON.parse(localStorage.getItem(STORAGE_KEY)) || JSON.parse(localStorage.getItem("amari_bachat_suraksha_v38")) || JSON.parse(localStorage.getItem("amari_bachat_suraksha_v37"));
         let appData = {
             ...defaultSharedData,
             ...stripIgnoredLegacyFields(localCached),
@@ -549,6 +585,8 @@
             appData.members.forEach((m, idx) => {
                 if (!m.age) m.age = 30;
                 if (!m.pin) m.pin = String(1111 + idx);
+                const parsedAmt = parseFloat(m.monthlyAmount);
+                m.monthlyAmount = !isNaN(parsedAmt) && parsedAmt > 0 ? parsedAmt : DEFAULT_MONTHLY_SAVING;
                 m.photo = sanitizePhotoUrl(m.photo);
                 if (!m.joinMonth) m.joinMonth = appData.cycleConfig.startMonth || "2026-01";
             });
@@ -821,7 +859,7 @@
                     matched = {
                         id: "main_admin",
                         username: String(appData.adminCreds.username || "admin").trim(),
-                        password: String(appData.adminCreds.password || "").trim(),
+                        password: String(appData.adminCreds.password || "admin123").trim(),
                         displayName: String(appData.adminCreds.displayName || "Main Admin").trim(),
                         adminLevel: "main"
                     };
@@ -1219,9 +1257,10 @@
                         <input type="hidden" id="advMemberId">
                         <p id="advMemberNameDisplay" class="text-xs text-indigo-300 font-semibold"></p>
                         <div>
-                            <label class="text-xs text-slate-300 mb-1 block">Kitne mahine ka advance dena hai?</label>
-                            <input type="number" id="advMonthsCount" value="1" min="1" max="12" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
+                            <label class="text-xs text-slate-300 mb-1 block">Kitne extra advance mahine dena hai?</label>
+                            <input type="number" id="advMonthsCount" value="1" min="1" max="12" oninput="updateAdvancePreviewText()" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none">
                         </div>
+                        <p id="advTotalPreview" class="text-xs text-emerald-300 bg-emerald-950/40 border border-emerald-500/30 px-3 py-2 rounded-xl"></p>
                         <div class="flex justify-end gap-3 pt-2">
                             <button onclick="closeAdvanceModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-sm">Cancel</button>
                             <button onclick="saveAdvancePayment()" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm">Save Advance</button>
@@ -1794,18 +1833,10 @@
         }
 
         function exportExcelAudit() {
+            const savingsStats = getAllSavingsStats();
             let data = appData.members.map((m, idx) => {
-                let mMonths = 0;
-                Object.keys(appData.savings).forEach(k => {
-                    if (k.endsWith(`_${m.id}`)) {
-                        let val = appData.savings[k];
-                        if (val === true) mMonths++;
-                        else if (typeof val === 'object' && val.paid) {
-                            mMonths += (1 + (val.advanceMonths || 0));
-                        }
-                    }
-                });
-                let mSavings = mMonths * 500;
+                let mSavings = savingsStats.memberAmountMap[m.id] || 0;
+                let mMonths = savingsStats.memberMonthsMap[m.id] || 0;
                 let mInterestPaid = 0;
                 appData.loans.filter(l => l.memberName === m.name).forEach(l => {
                     (l.repayments || []).forEach(r => { if (r.type === 'Interest') mInterestPaid += r.amount; });
@@ -1815,7 +1846,9 @@
                     "Member Name": m.name,
                     "Age": m.age,
                     "Mobile Phone": m.phone,
+                    "Current Monthly Rate (Rs)": getMemberMonthlyRate(m),
                     "Join Month": formatMonthMMYYYY(m.joinMonth || "2026-01"),
+                    "Credited Months": mMonths,
                     "Total Personal Savings (Rs)": mSavings,
                     "Interest Paid (Rs)": mInterestPaid
                 };
@@ -1857,9 +1890,11 @@
             const doc = new jsPDFRef();
 
             let totalSavingsCount = 0;
+            let totalSavings = 0;
             let savingsRows = [];
             Object.keys(appData.savings || {}).sort().forEach(k => {
-                let val = appData.savings[k];
+                const info = getSavingsEntryDetails(appData.savings[k]);
+                if (!info.paid) return;
                 let parts = String(k).split("_");
                 let mId = parseInt(parts.pop(), 10);
                 let rawMonthKey = parts.join("_");
@@ -1867,17 +1902,15 @@
                 let member = appData.members.find(x => x.id === mId);
                 let mName = member ? member.name : `Member #${mId}`;
 
-                if (val === true) {
-                    totalSavingsCount += 1;
-                    savingsRows.push([mName, formattedMonth, "1 Month (Paid)", "Rs. 500"]);
-                } else if (val && typeof val === "object" && val.paid) {
-                    let adv = parseInt(val.advanceMonths, 10) || 0;
-                    let monthsCredited = 1 + adv;
-                    totalSavingsCount += monthsCredited;
-                    savingsRows.push([mName, formattedMonth, `1 Paid + ${adv} Adv (${monthsCredited}M)`, `Rs. ${monthsCredited * 500}`]);
+                totalSavingsCount += info.monthsCredited;
+                totalSavings += info.totalAmount;
+
+                if (info.advanceMonths > 0) {
+                    savingsRows.push([mName, formattedMonth, `1 Paid + ${info.advanceMonths} Adv @ Rs.${info.rate}`, `Rs. ${info.totalAmount}`]);
+                } else {
+                    savingsRows.push([mName, formattedMonth, `1 Month @ Rs.${info.rate}`, `Rs. ${info.totalAmount}`]);
                 }
             });
-            let totalSavings = totalSavingsCount * 500;
 
             let totalInterest = 0;
             let interestRows = [];
@@ -1940,10 +1973,9 @@
             if (metricType === "savings") {
                 reportHeading = "TOTAL SAVINGS BREAKDOWN";
                 summaryLines = [
-                    `Formula: ${totalSavingsCount} Months x Rs. 500 = Rs. ${totalSavings}`,
-                    `Total Savings: Rs. ${totalSavings}`
+                    `Total Credited Months: ${totalSavingsCount} Months | Total Savings: Rs. ${totalSavings}`
                 ];
-                headers = ["Member Name", "Month (MM-YYYY)", "Months Credited", "Amount"];
+                headers = ["Member Name", "Month (MM-YYYY)", "Details & Rate", "Amount"];
                 bodyRows = savingsRows.length > 0 ? savingsRows : [["-", "-", "No savings recorded", "Rs. 0"]];
                 filePrefix = "Total_Savings";
             } else if (metricType === "interest") {
@@ -1971,7 +2003,7 @@
                 ];
                 headers = ["Item", "Description", "Amount"];
                 bodyRows = [
-                    ["Total Savings", `${totalSavingsCount} months x Rs. 500`, `Rs. ${totalSavings}`],
+                    ["Total Savings", `${totalSavingsCount} credited months`, `Rs. ${totalSavings}`],
                     ["Interest Earned", "Total interest received", `Rs. ${totalInterest}`],
                     ["Net Penalties", "Penalty income minus expenses", `Rs. ${totalPenaltiesNet}`],
                     ["Less: Active Loans Out", "Pending active loan principal", `- Rs. ${activeLoansTotal}`],
@@ -2019,8 +2051,14 @@
 
         function checkMemberPaidStatus(memberId, targetMonth) {
             let directKey = `${targetMonth}_${memberId}`;
-            if (appData.savings[directKey] === true || (typeof appData.savings[directKey] === 'object' && appData.savings[directKey].paid)) {
-                return { status: true, type: 'Paid' };
+            const directDetails = getSavingsEntryDetails(appData.savings[directKey]);
+            if (directDetails.paid) {
+                return {
+                    status: true,
+                    type: directDetails.advanceMonths > 0 ? 'Paid + Advance' : 'Paid',
+                    amountPaid: directDetails.totalAmount,
+                    rate: directDetails.rate
+                };
             }
 
             let [tYear, tMonth] = targetMonth.split('-').map(Number);
@@ -2031,15 +2069,26 @@
                 let pastMonthKey = `${yStr}-${mStr}_${memberId}`;
                 
                 let val = appData.savings[pastMonthKey];
-                if (val && typeof val === 'object' && val.advanceMonths) {
-                    let advCount = val.advanceMonths;
+                const pastDetails = getSavingsEntryDetails(val);
+                if (pastDetails.paid && pastDetails.advanceMonths > 0) {
+                    let advCount = pastDetails.advanceMonths;
                     let diffMonths = (tYear - yStr) * 12 + (tMonth - parseInt(mStr));
                     if (diffMonths > 0 && diffMonths <= advCount) {
-                        return { status: true, type: 'Advance Adjusted' };
+                        return {
+                            status: true,
+                            type: 'Advance Adjusted',
+                            amountPaid: pastDetails.rate,
+                            rate: pastDetails.rate
+                        };
                     }
                 }
             }
-            return { status: false, type: 'Pending' };
+            return {
+                status: false,
+                type: 'Pending',
+                amountPaid: 0,
+                rate: getMemberMonthlyRate(memberId)
+            };
         }
 
         function autoApplyLatePenalties() {
@@ -2078,19 +2127,10 @@
             const memberObj = isAdmin ? null : appData.members.find(m => m.name === memberName);
             const cycleInfo = appData.cycleConfig || defaultSharedData.cycleConfig;
             const elapsedCycleMonths = computeActiveMonthsForMember({ joinMonth: cycleInfo.startMonth }, appData.currentMonth);
+            const savingsStats = getAllSavingsStats();
 
             if (!isAdmin && memberObj) {
-                let memberTotalPaidMonths = 0;
-                Object.keys(appData.savings).forEach(k => {
-                    if (k.endsWith(`_${memberObj.id}`)) {
-                        let val = appData.savings[k];
-                        if (val === true) memberTotalPaidMonths++;
-                        else if (typeof val === 'object' && val.paid) {
-                            memberTotalPaidMonths += (1 + (val.advanceMonths || 0));
-                        }
-                    }
-                });
-                let totalMemberSavings = memberTotalPaidMonths * 500;
+                let totalMemberSavings = savingsStats.memberAmountMap[memberObj.id] || 0;
                 let memberLoans = appData.loans.filter(l => l.memberName === memberName);
                 let memberActiveLoan = memberLoans.filter(l => !l.deleted).reduce((acc, l) => {
                     let repaid = (l.repayments || []).reduce((s, r) => r.type === 'Principal' ? s + r.amount : s, 0);
@@ -2098,6 +2138,7 @@
                 }, 0);
                 let memberPenalties = appData.expenses.filter(e => e.title.includes(memberName) && e.type === 'Income').reduce((s, e) => s + e.amount, 0);
                 let currentMonthStatus = checkMemberPaidStatus(memberObj.id, appData.currentMonth);
+                let memberCurrentRate = getMemberMonthlyRate(memberObj);
                 let safePhoto = escapeAttr(sanitizePhotoUrl(memberObj.photo));
                 const loanContactName = escapeAttr(getLoanContactAdminName());
 
@@ -2142,12 +2183,12 @@
                             <h3 class="text-md font-bold text-white">Current Month Status (${formatMonthMMYYYY(appData.currentMonth)})</h3>
                             <div class="flex items-center justify-between bg-slate-800/40 p-4 rounded-xl border border-slate-700/50">
                                 <div>
-                                    <p class="text-sm font-semibold text-white">Mahine ki Savings (₹500)</p>
+                                    <p class="text-sm font-semibold text-white">Mahine ki Savings (₹${currentMonthStatus.status ? currentMonthStatus.amountPaid : memberCurrentRate})</p>
                                     <p class="text-xs text-slate-400">Apni monthly savings status yahan check karein.</p>
                                 </div>
                                 <div>
                                     <span class="px-3 py-1.5 rounded-full text-xs font-semibold ${currentMonthStatus.status ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}">
-                                        ${currentMonthStatus.status ? 'PAID ✅' : 'PENDING ⚠️'}
+                                        ${currentMonthStatus.status ? `PAID (₹${currentMonthStatus.amountPaid}) ✅` : 'PENDING ⚠️'}
                                     </span>
                                 </div>
                             </div>
@@ -2156,15 +2197,7 @@
                 `;
             }
 
-            let totalSavingsCount = 0;
-            Object.keys(appData.savings).forEach(k => {
-                let val = appData.savings[k];
-                if (val === true) totalSavingsCount++;
-                else if (typeof val === 'object' && val.paid) {
-                    totalSavingsCount += (1 + (val.advanceMonths || 0));
-                }
-            });
-            let totalSavings = totalSavingsCount * 500;
+            let totalSavings = savingsStats.totalAmount;
 
             let totalInterest = 0;
             appData.loans.forEach(l => { (l.repayments || []).forEach(r => { if (r.type === 'Interest') totalInterest += r.amount; }); });
@@ -2334,15 +2367,8 @@
                     const ctx = document.getElementById('financialDonutChart');
                     if (!ctx || typeof window.Chart !== "function") return;
                     
-                    let totalSavingsCount = 0;
-                    Object.keys(appData.savings).forEach(k => {
-                        let val = appData.savings[k];
-                        if (val === true) totalSavingsCount++;
-                        else if (typeof val === 'object' && val.paid) {
-                            totalSavingsCount += (1 + (val.advanceMonths || 0));
-                        }
-                    });
-                    let totalSavings = totalSavingsCount * 500;
+                    const savingsStats = getAllSavingsStats();
+                    let totalSavings = savingsStats.totalAmount;
                     let totalInterest = 0;
                     appData.loans.forEach(l => { (l.repayments || []).forEach(r => { if (r.type === 'Interest') totalInterest += r.amount; }); });
                     let totalPenaltiesNet = appData.expenses.reduce((acc, e) => e.type === 'Income' ? acc + e.amount : acc - e.amount, 0);
@@ -2372,18 +2398,40 @@
             }, 100);
         }
 
+        function updateMemberMonthlyAmountInline(memberId, rawValue) {
+            if (!isAnyAdminUser()) return;
+            const parsed = parseFloat(rawValue);
+            const member = appData.members.find(m => m.id === memberId);
+            if (!member) return;
+
+            if (isNaN(parsed) || parsed <= 0) {
+                alert('Kripya 0 se bada valid amount dalein (e.g. 500 ya 1000).');
+                render();
+                return;
+            }
+
+            const oldRate = getMemberMonthlyRate(member);
+            if (oldRate === parsed) return;
+
+            member.monthlyAmount = parsed;
+            recordActivityLog("Member", `Updated ${member.name}'s next monthly saving amount: ₹${oldRate} -> ₹${parsed} (Previous paid entries unchanged)`);
+            saveAppData();
+        }
+        window.updateMemberMonthlyAmountInline = updateMemberMonthlyAmountInline;
+
         function renderMembersTab() {
             const isAdmin = isAnyAdminUser();
             const isMainAdmin = isMainAdminUser();
             const memberName = isAdmin ? null : appData.currentUser.name;
             const membersList = isAdmin ? appData.members : appData.members.filter(m => m.name === memberName);
+            const savingsStats = getAllSavingsStats();
 
             return `
                 <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 space-y-6 shadow-xl">
                     <div class="flex flex-wrap justify-between items-center gap-4">
                         <div>
                             <h2 class="text-xl font-bold text-white">${isAdmin ? 'અમારી બચત | અમારી સુરક્ષા - Members Directory' : 'અમારી બચત | અમારી સુરક્ષા - My Profile & Savings'}</h2>
-                            <p class="text-xs text-slate-400">${isAdmin ? 'Members ki photo, umar, PIN, aur savings status yahan manage karein.' : 'Aapki personal savings aur profile details.'}</p>
+                            <p class="text-xs text-slate-400">${isAdmin ? 'Har member ke saamne Monthly Amount (₹) set karein; Paid click karne par wahi amount add hoga (purani entries nahi badlengi).' : 'Aapki personal savings aur profile details.'}</p>
                         </div>
                         <div class="flex items-center gap-3">
                             <label class="text-sm text-slate-300">Month:</label>
@@ -2401,6 +2449,7 @@
                                     <th class="p-3">Phone</th>
                                     ${isMainAdmin ? `<th class="p-3">PIN</th>` : ''}
                                     <th class="p-3">Join Month</th>
+                                    <th class="p-3">Monthly Amount (₹)</th>
                                     <th class="p-3">${formatMonthMMYYYY(appData.currentMonth)} Status</th>
                                     <th class="p-3">Total Savings</th>
                                     <th class="p-3 text-right">Actions</th>
@@ -2410,19 +2459,12 @@
                                 ${membersList.map((m) => {
                                     let res = checkMemberPaidStatus(m.id, appData.currentMonth);
                                     let isPaid = res.status;
-                                    let statusText = res.type === 'Advance Adjusted' ? 'PAID (Advance)' : (isPaid ? 'PAID (₹500)' : 'PENDING');
+                                    let currentRate = getMemberMonthlyRate(m);
+                                    let statusText = res.type === 'Advance Adjusted'
+                                        ? `PAID (Adv ₹${res.amountPaid})`
+                                        : (isPaid ? `PAID (₹${res.amountPaid})` : `PENDING (₹${currentRate})`);
 
-                                    let memberTotalPaidMonths = 0;
-                                    Object.keys(appData.savings).forEach(k => {
-                                        if (k.endsWith(`_${m.id}`)) {
-                                            let val = appData.savings[k];
-                                            if (val === true) memberTotalPaidMonths++;
-                                            else if (typeof val === 'object' && val.paid) {
-                                                memberTotalPaidMonths += (1 + (val.advanceMonths || 0));
-                                            }
-                                        }
-                                    });
-                                    let totalAmount = memberTotalPaidMonths * 500;
+                                    let totalAmount = savingsStats.memberAmountMap[m.id] || 0;
                                     let safePhoto = escapeAttr(sanitizePhotoUrl(m.photo));
 
                                     return `
@@ -2436,6 +2478,16 @@
                                             ${isMainAdmin ? `<td class="p-3 font-mono text-amber-300 text-xs">${escapeAttr(m.pin || '1234')}</td>` : ''}
                                             <td class="p-3 text-indigo-300 text-xs font-medium">${formatMonthMMYYYY(m.joinMonth || '2026-01')}</td>
                                             <td class="p-3">
+                                                ${isAdmin ? `
+                                                    <div class="inline-flex items-center bg-slate-800 border border-slate-700 rounded-xl px-2.5 py-1">
+                                                        <span class="text-xs text-emerald-400 font-bold mr-1">₹</span>
+                                                        <input type="number" min="1" step="1" value="${currentRate}" onchange="window.updateMemberMonthlyAmountInline(${m.id}, this.value)" class="w-20 bg-transparent text-xs font-bold text-white focus:outline-none" title="Next Paid click amount">
+                                                    </div>
+                                                ` : `
+                                                    <span class="font-semibold text-amber-300">₹${currentRate} / mo</span>
+                                                `}
+                                            </td>
+                                            <td class="p-3">
                                                 <span class="px-3 py-1 rounded-full text-xs font-semibold ${isPaid ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}">
                                                     ${statusText}
                                                 </span>
@@ -2444,7 +2496,7 @@
                                             <td class="p-3 text-right space-x-1 sm:space-x-2">
                                                 ${isAdmin ? `
                                                     <button onclick="toggleSavings(${m.id})" class="px-2.5 py-1.5 rounded-lg text-xs font-medium ${isPaid ? 'bg-amber-600/20 text-amber-400 hover:bg-amber-600 hover:text-white' : 'bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600 hover:text-white'} transition">
-                                                        ${isPaid ? 'Pending' : 'Paid'}
+                                                        ${isPaid ? 'Pending' : `Paid ₹${currentRate}`}
                                                     </button>
                                                     <button onclick="openAdvanceModal(${m.id}, '${escapeAttr(m.name)}')" class="px-2.5 py-1.5 bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600 hover:text-white rounded-lg text-xs font-medium transition" title="Pay Advance">Advance ⚡</button>
                                                     <button onclick="openMemberModal(${m.id})" class="p-1.5 bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white rounded-lg text-xs transition" title="Edit"><i data-lucide="edit-3" class="w-4 h-4"></i></button>
@@ -2485,6 +2537,16 @@
                                 <input type="text" id="memberInputPin" placeholder="e.g. 1234" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
                             </div>
                         </div>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="text-xs text-emerald-300 mb-1 block">Monthly Saving Amount (₹)</label>
+                                <input type="number" id="memberInputMonthlyAmount" min="1" value="500" placeholder="500" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
+                            </div>
+                            <div>
+                                <label class="text-xs text-slate-300 mb-1 block">Join Month</label>
+                                <input type="month" id="memberInputJoinMonth" value="${escapeAttr(appData.cycleConfig.startMonth || '2026-01')}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
+                            </div>
+                        </div>
                         <div>
                             <label class="text-xs text-slate-300 mb-1.5 block">Profile Photo (File Manager / Gallery)</label>
                             <div class="flex items-center gap-3 bg-slate-800/60 border border-slate-700 p-3 rounded-xl">
@@ -2494,10 +2556,6 @@
                                     <span id="memberPhotoStatus" class="text-[11px] text-slate-400 block mt-1">File manager se photo chunein</span>
                                 </div>
                             </div>
-                        </div>
-                        <div>
-                            <label class="text-xs text-slate-300 mb-1 block">Join Month</label>
-                            <input type="month" id="memberInputJoinMonth" value="${escapeAttr(appData.cycleConfig.startMonth || '2026-01')}" class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none">
                         </div>
                         <div class="flex justify-end gap-3 pt-2">
                             <button onclick="closeMemberModal()" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-sm">Cancel</button>
@@ -2567,25 +2625,25 @@
 
             let savingsHistoryRows = [];
             let memberTotalPaidMonths = 0;
+            let totalSavings = 0;
             Object.keys(appData.savings || {}).sort().forEach(k => {
                 if (k.endsWith(`_${m.id}`)) {
+                    const info = getSavingsEntryDetails(appData.savings[k]);
+                    if (!info.paid) return;
                     let parts = String(k).split("_");
                     parts.pop();
                     let formattedMonth = formatMonthMMYYYY(parts.join("_"));
-                    let val = appData.savings[k];
-                    if (val === true) {
-                        memberTotalPaidMonths += 1;
-                        savingsHistoryRows.push([formattedMonth, "Paid (1 Month)", "Rs. 500"]);
-                    } else if (val && typeof val === 'object' && val.paid) {
-                        let adv = parseInt(val.advanceMonths, 10) || 0;
-                        let credited = 1 + adv;
-                        memberTotalPaidMonths += credited;
-                        savingsHistoryRows.push([formattedMonth, `Paid + ${adv} Adv (${credited}M)`, `Rs. ${credited * 500}`]);
+                    memberTotalPaidMonths += info.monthsCredited;
+                    totalSavings += info.totalAmount;
+
+                    if (info.advanceMonths > 0) {
+                        savingsHistoryRows.push([formattedMonth, `Paid + ${info.advanceMonths} Adv @ Rs.${info.rate}`, `Rs. ${info.totalAmount}`]);
+                    } else {
+                        savingsHistoryRows.push([formattedMonth, `Paid (1 Month @ Rs.${info.rate})`, `Rs. ${info.totalAmount}`]);
                     }
                 }
             });
 
-            let totalSavings = memberTotalPaidMonths * 500;
             let mLoans = appData.loans.filter(l => l.memberName === m.name);
 
             const { jsPDF } = window.jspdf;
@@ -2600,7 +2658,7 @@
             doc.setFontSize(11);
             doc.text(`Member Name: ${m.name} (Age: ${m.age} yrs)`, 14, 44);
             doc.text(`Phone Number: ${m.phone}`, 14, 51);
-            doc.text(`Join Month: ${formatMonthMMYYYY(m.joinMonth || '2026-01')}`, 14, 58);
+            doc.text(`Join Month: ${formatMonthMMYYYY(m.joinMonth || '2026-01')} | Current Monthly Rate: Rs. ${getMemberMonthlyRate(m)}`, 14, 58);
             doc.text(`Total Personal Savings Accumulated: Rs. ${totalSavings} (${memberTotalPaidMonths} Months)`, 14, 65);
 
             doc.setFontSize(12);
@@ -2608,7 +2666,7 @@
             doc.text("Savings History", 14, 75);
 
             doc.autoTable({
-                head: [['Month (MM-YYYY)', 'Status', 'Amount']],
+                head: [['Month (MM-YYYY)', 'Status & Rate', 'Amount']],
                 body: savingsHistoryRows.length > 0 ? savingsHistoryRows : [['-', 'No savings records', 'Rs. 0']],
                 startY: 79
             });
@@ -2645,41 +2703,69 @@
             if (!isAnyAdminUser()) { alert('Sirf Admin ya Co-Admin hi status change kar sakta hai!'); return; }
             const member = appData.members.find(m => m.id === id);
             const mLabel = member ? member.name : `Member #${id}`;
-            let key = `${appData.currentMonth}_${id}`;
-            let current = appData.savings[key];
-            let nextPaid = false;
-            if (current && typeof current === 'object') {
-                nextPaid = !current.paid;
-                appData.savings[key] = nextPaid;
+            const rate = getMemberMonthlyRate(member || id);
+            const key = `${appData.currentMonth}_${id}`;
+            const currentDetails = getSavingsEntryDetails(appData.savings[key]);
+
+            if (currentDetails.paid) {
+                appData.savings[key] = false;
+                recordActivityLog("Savings", `${mLabel} (${formatMonthMMYYYY(appData.currentMonth)}) savings marked as PENDING (Cleared ₹${currentDetails.totalAmount})`);
             } else {
-                nextPaid = !current;
-                appData.savings[key] = nextPaid;
+                appData.savings[key] = {
+                    paid: true,
+                    advanceMonths: 0,
+                    amountPerMonth: rate,
+                    totalAmount: rate
+                };
+                recordActivityLog("Savings", `${mLabel} (${formatMonthMMYYYY(appData.currentMonth)}) savings marked as PAID (₹${rate})`);
             }
-            recordActivityLog("Savings", `${mLabel} (${formatMonthMMYYYY(appData.currentMonth)}) savings marked as ${nextPaid ? "PAID (₹500)" : "PENDING"}`);
             saveAppData();
         }
 
+        function updateAdvancePreviewText() {
+            const id = parseInt(document.getElementById('advMemberId').value, 10);
+            const advMonths = Math.max(1, parseInt(document.getElementById('advMonthsCount').value, 10) || 1);
+            const rate = getMemberMonthlyRate(id);
+            const totalMonths = 1 + advMonths;
+            const totalAmt = totalMonths * rate;
+            const previewEl = document.getElementById('advTotalPreview');
+            if (previewEl) {
+                previewEl.innerHTML = `💡 Rate: <b>₹${rate}/month</b> × <b>${totalMonths} Months</b> (Current + ${advMonths} Advance) = <b>₹${totalAmt}</b>`;
+            }
+        }
+        window.updateAdvancePreviewText = updateAdvancePreviewText;
+
         function openAdvanceModal(id, name) {
             if (!isAnyAdminUser()) return;
+            const rate = getMemberMonthlyRate(id);
             document.getElementById('advMemberId').value = id;
-            document.getElementById('advMemberNameDisplay').innerText = `Member: ${name} (Current Month: ${formatMonthMMYYYY(appData.currentMonth)})`;
+            document.getElementById('advMemberNameDisplay').innerText = `Member: ${name} (Month: ${formatMonthMMYYYY(appData.currentMonth)} • Rate: ₹${rate}/mo)`;
             document.getElementById('advMonthsCount').value = "1";
+            updateAdvancePreviewText();
             document.getElementById('advanceModal').classList.remove('hidden');
         }
         function closeAdvanceModal() { document.getElementById('advanceModal').classList.add('hidden'); }
         function saveAdvancePayment() {
             if (!isAnyAdminUser()) return;
-            let id = parseInt(document.getElementById('advMemberId').value);
-            let advMonths = parseInt(document.getElementById('advMonthsCount').value) || 1;
+            let id = parseInt(document.getElementById('advMemberId').value, 10);
+            let advMonths = Math.max(1, parseInt(document.getElementById('advMonthsCount').value, 10) || 1);
             const member = appData.members.find(m => m.id === id);
             const mLabel = member ? member.name : `Member #${id}`;
+            const rate = getMemberMonthlyRate(member || id);
+            const totalMonths = 1 + advMonths;
+            const totalAmt = totalMonths * rate;
+
             let key = `${appData.currentMonth}_${id}`;
-            appData.savings[key] = { paid: true, advanceMonths: advMonths };
-            const totalAmt = 500 * (advMonths + 1);
-            recordActivityLog("Savings", `Recorded advance savings for ${mLabel} from ${formatMonthMMYYYY(appData.currentMonth)}: 1 Paid + ${advMonths} Advance month(s) = ₹${totalAmt}`);
+            appData.savings[key] = {
+                paid: true,
+                advanceMonths: advMonths,
+                amountPerMonth: rate,
+                totalAmount: totalAmt
+            };
+            recordActivityLog("Savings", `Recorded advance savings for ${mLabel} from ${formatMonthMMYYYY(appData.currentMonth)}: 1 Paid + ${advMonths} Advance month(s) @ ₹${rate}/mo = ₹${totalAmt}`);
             closeAdvanceModal();
             saveAppData();
-            alert(`Successfully recorded ₹${totalAmt} including ${advMonths} month(s) advance!`);
+            alert(`Successfully recorded ₹${totalAmt} (${totalMonths} months @ ₹${rate}/mo) including ${advMonths} month(s) advance!`);
         }
 
         function openMemberModal(id = null) {
@@ -2698,6 +2784,7 @@
                 document.getElementById('memberInputAge').value = m.age || 30;
                 document.getElementById('memberInputPhone').value = m.phone;
                 document.getElementById('memberInputPin').value = m.pin || "1234";
+                document.getElementById('memberInputMonthlyAmount').value = getMemberMonthlyRate(m);
                 if (previewEl) previewEl.src = cleanPhoto;
                 if (statusEl) statusEl.innerText = "Nayi photo badalne ke liye file chunein";
                 document.getElementById('memberInputJoinMonth').value = m.joinMonth || appData.cycleConfig.startMonth || "2026-01";
@@ -2709,6 +2796,7 @@
                 document.getElementById('memberInputAge').value = "";
                 document.getElementById('memberInputPhone').value = "";
                 document.getElementById('memberInputPin').value = "1234";
+                document.getElementById('memberInputMonthlyAmount').value = DEFAULT_MONTHLY_SAVING;
                 if (previewEl) previewEl.src = DEFAULT_MEMBER_PHOTO;
                 if (statusEl) statusEl.innerText = "File manager se photo chunein";
                 document.getElementById('memberInputJoinMonth').value = appData.currentMonth;
@@ -2726,10 +2814,12 @@
             let age = parseInt(document.getElementById('memberInputAge').value) || 25;
             let phone = document.getElementById('memberInputPhone').value.trim();
             let pin = document.getElementById('memberInputPin').value.trim() || "1234";
+            let monthlyAmount = parseFloat(document.getElementById('memberInputMonthlyAmount').value);
             let photo = sanitizePhotoUrl(pendingMemberPhotoDataUrl);
             let joinMonth = document.getElementById('memberInputJoinMonth').value || appData.cycleConfig.startMonth || "2026-01";
             
             if (!name || !phone || !pin) { alert('Naam, phone number aur PIN bharein.'); return; }
+            if (isNaN(monthlyAmount) || monthlyAmount <= 0) { alert('Kripya valid Monthly Saving Amount bharein.'); return; }
 
             if (id) {
                 let m = appData.members.find(x => x.id === parseInt(id));
@@ -2739,15 +2829,16 @@
                     m.age = age;
                     m.phone = phone; 
                     m.pin = pin;
+                    m.monthlyAmount = monthlyAmount;
                     m.photo = photo;
                     m.joinMonth = joinMonth;
-                    recordActivityLog("Member", `Updated member: ${prevName} -> ${name} (Phone: ${phone}, Join: ${formatMonthMMYYYY(joinMonth)})`);
+                    recordActivityLog("Member", `Updated member: ${prevName} -> ${name} (Phone: ${phone}, Monthly: ₹${monthlyAmount}, Join: ${formatMonthMMYYYY(joinMonth)})`);
                     alert(`Member "${name}" update ho gaya hai!`);
                 }
             } else {
                 let newId = appData.members.length > 0 ? Math.max(...appData.members.map(m => m.id)) + 1 : 1;
-                appData.members.push({ id: newId, name, age, phone, pin, photo, joinMonth });
-                recordActivityLog("Member", `Added new member: ${name} (Phone: ${phone}, Join: ${formatMonthMMYYYY(joinMonth)})`);
+                appData.members.push({ id: newId, name, age, phone, pin, monthlyAmount, photo, joinMonth });
+                recordActivityLog("Member", `Added new member: ${name} (Phone: ${phone}, Monthly: ₹${monthlyAmount}, Join: ${formatMonthMMYYYY(joinMonth)})`);
                 alert(`Naya member "${name}" add ho gaya hai!`);
             }
             closeMemberModal();
@@ -3175,20 +3266,9 @@
         function closeLoanModal() { document.getElementById('loanModal').classList.add('hidden'); }
 
         function checkLoanEligibility(memberName) {
+            const savingsStats = getAllSavingsStats();
             let member = appData.members.find(m => m.name === memberName);
-            let memberPaidCount = 0;
-            if (member) {
-                Object.keys(appData.savings).forEach(k => {
-                    if (k.endsWith(`_${member.id}`)) {
-                        let val = appData.savings[k];
-                        if (val === true) memberPaidCount++;
-                        else if (typeof val === 'object' && val.paid) {
-                            memberPaidCount += (1 + (val.advanceMonths || 0));
-                        }
-                    }
-                });
-            }
-            let totalSavings = memberPaidCount * 500;
+            let totalSavings = member ? (savingsStats.memberAmountMap[member.id] || 0) : 0;
             let maxLimit = totalSavings * 3;
             document.getElementById('eligibilityNotice').innerHTML = `💡 <b>Eligibility:</b> ${escapeAttr(memberName)} ki total savings ₹${totalSavings} hai. Max recommended loan limit: <b>₹${maxLimit}</b> (3x)`;
         }
